@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "src",
+    "outDir": "dist/server",
+    "noEmit": false,
+    "isolatedModules": false,
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "sourceMap": true
+  },
+  "include": ["src/server", "src/shared"]
+}
