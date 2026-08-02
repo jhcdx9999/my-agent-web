@@ -6,7 +6,7 @@
 
 - TypeScript 前端与 TypeScript Node/Express 后端。
 - 用户可在网页中和 GPT 对话，并直接看到回复。
-- 支持本地账号密码登录；新账号会自动创建。
+- 支持本地账号密码注册和登录，登录保活默认 120 小时。
 - 支持按用户隔离的历史对话记忆，左侧栏可选择历史会话。
 - 支持上传图片、PDF、文本、Markdown、CSV、JSON 和常见代码文件给 AI 分析。
 - 当用户要求生成图片时，后端调用图片生成接口并把 PNG/JPG/WebP 图片保存到本地，前端直接预览并提供下载。
@@ -48,9 +48,12 @@ OPENAI_IMAGE_FORMAT=png
 REQUEST_BODY_LIMIT=35mb
 MAX_UPLOAD_FILES=5
 MAX_UPLOAD_BYTES=10485760
+AUTH_TOKEN_TTL_HOURS=120
 ```
 
-`OPENAI_TEXT_API` 默认使用 Responses API；如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`。上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`。
+`OPENAI_BASE_URL` 要填写完整 API 根地址，例如官方 OpenAI 是 `https://api.openai.com/v1`。`OPENAI_TEXT_API` 默认使用 Responses API；如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`，但上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`，且上游服务需要支持 `input_image` / `input_file`。
+
+如果上传后返回 `Upstream request failed`，通常是第三方转发服务不支持 Responses 文件输入、模型不支持视觉/文件能力，或 `OPENAI_BASE_URL` 缺少 `/v1` 这类路径。
 
 ## Ubuntu 运行
 

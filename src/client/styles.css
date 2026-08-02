@@ -64,6 +64,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--bg) 86%, var(--panel)) 0%, var(--bg) 46%),
     var(--bg);
@@ -161,6 +162,15 @@ select:disabled {
   border-radius: 7px;
   background: color-mix(in srgb, #ef4444 14%, var(--panel));
   color: var(--text);
+}
+
+.auth-link-button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--accent-strong);
+  font-weight: 700;
 }
 
 .sidebar {
@@ -553,6 +563,7 @@ select:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-width: 100%;
 }
 
 .pending-upload {
@@ -717,6 +728,7 @@ select:disabled {
     grid-template-rows: auto minmax(0, 1fr);
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     min-height: 0;
     margin: 0;
     gap: 0;
@@ -766,6 +778,27 @@ select:disabled {
     max-width: 96%;
   }
 
+  .composer {
+    padding:
+      12px
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .pending-uploads {
+    flex-wrap: nowrap;
+    margin: 0 -2px;
+    overflow-x: auto;
+    padding: 0 2px 3px;
+    scrollbar-width: thin;
+  }
+
+  .pending-upload {
+    flex: 0 0 min(320px, calc(100vw - 28px));
+    max-width: calc(100vw - 28px);
+  }
+
   .composer-footer {
     align-items: stretch;
     flex-direction: column;
@@ -779,14 +812,21 @@ select:disabled {
 
   .upload-button {
     width: 100%;
+    min-height: 44px;
   }
 
   .composer select {
     flex: 1 1 auto;
     max-width: none;
+    min-height: 44px;
+  }
+
+  .pause-button {
+    min-height: 44px;
   }
 
   .send-button {
     width: 100%;
+    min-height: 44px;
   }
 }

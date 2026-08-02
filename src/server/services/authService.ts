@@ -61,7 +61,7 @@ const readJsonFile = async <T>(filePath: string, fallback: T): Promise<T> => {
 
   try {
     const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw.replace(/^\uFEFF/, "")) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return fallback;

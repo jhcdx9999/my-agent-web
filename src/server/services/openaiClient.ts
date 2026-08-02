@@ -55,6 +55,7 @@ type ResponsesInputContent =
   | {
       type: "input_image";
       image_url: string;
+      detail: "auto";
     }
   | {
       type: "input_file";
@@ -88,20 +89,27 @@ const parseResponseJson = async <T>(response: Response): Promise<T> => {
   try {
     parsed = text ? (JSON.parse(text) as T) : ({} as T);
   } catch {
-    throw new HttpError(response.status, parseNonJsonOpenAiError(text));
+    throw new HttpError(response.ok ? 502 : response.status, parseNonJsonOpenAiError(text));
   }
 
   if (!response.ok) {
     const maybeError = parsed as { error?: { message?: string } };
     throw new HttpError(
       response.status,
-      maybeError.error?.message ?? `OpenAI API request failed with ${response.status}.`,
+      formatOpenAiErrorMessage(
+        maybeError.error?.message ?? `OpenAI API request failed with ${response.status}.`
+      ),
       parsed
     );
   }
 
   return parsed;
 };
+
+const formatOpenAiErrorMessage = (message: string): string =>
+  /upstream request failed/i.test(message)
+    ? `${message}。如果这是上传图片、PDF 或文件时出现，请确认 OPENAI_BASE_URL 对应的服务和当前模型支持 Responses API 的 input_image/input_file。`
+    : message;
 
 const parseNonJsonOpenAiError = (text: string): string => {
   const jsonFragments = [
@@ -121,7 +129,7 @@ const parseNonJsonOpenAiError = (text: string): string => {
       const message = parsed.error?.message ?? parsed.response?.error?.message;
       const type = parsed.error?.type ?? parsed.response?.error?.type ?? parsed.response?.status;
       if (message) {
-        return `OpenAI 上游请求失败：${message}${type ? ` (${type})` : ""}`;
+        return `OpenAI 上游请求失败：${formatOpenAiErrorMessage(message)}${type ? ` (${type})` : ""}`;
       }
     } catch {
       // Keep looking for the next fragment.
@@ -157,6 +165,15 @@ const dataUrlToText = (dataUrl: string): string | undefined => {
   }
 };
 
+const dataUrlWithMimeType = (dataUrl: string, mimeType: string): string => {
+  const match = /^data:([^;,]*)(;base64,.*)$/i.exec(dataUrl);
+  if (!match || !mimeType || mimeType === "application/octet-stream") {
+    return dataUrl;
+  }
+
+  return match[1] ? dataUrl : `data:${mimeType}${match[2]}`;
+};
+
 const isTextAttachment = (attachment: ChatAttachment): boolean =>
   attachment.mimeType.startsWith("text/") ||
   [
@@ -175,7 +192,8 @@ const attachmentToContent = (attachment: ChatAttachment): ResponsesInputContent 
   if (attachment.kind === "image" || attachment.mimeType.startsWith("image/")) {
     return {
       type: "input_image",
-      image_url: attachment.dataUrl
+      image_url: dataUrlWithMimeType(attachment.dataUrl, attachment.mimeType),
+      detail: "auto"
     };
   }
 
@@ -190,7 +208,7 @@ const attachmentToContent = (attachment: ChatAttachment): ResponsesInputContent 
   return {
     type: "input_file",
     filename: attachment.filename,
-    file_data: attachment.dataUrl
+    file_data: dataUrlWithMimeType(attachment.dataUrl, attachment.mimeType)
   };
 };
 
