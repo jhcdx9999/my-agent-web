@@ -16,6 +16,7 @@ import {
 import { applyTheme, readStoredTheme } from "./theme";
 import { createInitialState, createUserMessage, type AppState } from "./state";
 import { renderApp } from "./render";
+import { createClientId } from "./id";
 import type { AuthResponse, AuthUser, ChatAttachment, ConversationSummary } from "../shared/types";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -144,7 +145,7 @@ const createUploadAttachment = async (file: File): Promise<ChatAttachment> => {
   const kind = getUploadKind(file);
 
   return {
-    id: `att_${crypto.randomUUID()}`,
+    id: createClientId("att"),
     kind,
     source: "uploaded",
     filename: file.name,
@@ -433,7 +434,7 @@ const bindEvents = (): void => {
         messages: [
           ...nextMessages,
           {
-            id: `msg_${crypto.randomUUID()}`,
+            id: createClientId("msg"),
             role: "assistant",
             content: `请求失败：${message}`,
             createdAt: new Date().toISOString()

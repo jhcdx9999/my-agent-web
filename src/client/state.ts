@@ -5,6 +5,7 @@ import type {
   ConversationSummary,
   ThemeName
 } from "../shared/types";
+import { createClientId } from "./id";
 
 export interface AppState {
   user?: AuthUser;
@@ -49,7 +50,7 @@ export const createUserMessage = (
   content: string,
   attachments: ChatAttachment[] = []
 ): ChatMessage => ({
-  id: `msg_${crypto.randomUUID()}`,
+  id: createClientId("msg"),
   role: "user",
   content,
   createdAt: new Date().toISOString(),
