@@ -5,6 +5,7 @@ import { appConfig } from "../config";
 import { HttpError } from "../errors";
 import { ensureDirectory, safeGeneratedPath } from "../utils/fs";
 import { createId } from "../utils/id";
+import { readDominantUserRecords, userHasOpenAiApiKey } from "./userConfigService";
 import type { AuthRequest, AuthResponse, AuthUser } from "../../shared/types";
 
 type StoredUser = {
@@ -20,13 +21,6 @@ type SessionRecord = {
   user: AuthUser;
   authMode?: "free" | "dominant";
   expiresAt: string;
-};
-
-type DominantUserEntry = {
-  id?: string;
-  username?: string;
-  account?: string;
-  password?: string;
 };
 
 const usersFile = path.join(appConfig.authDir, "users.json");
@@ -108,41 +102,26 @@ const readJsonFile = async <T>(filePath: string, fallback: T): Promise<T> => {
 };
 
 const readDominantUsers = async (): Promise<StoredUser[]> => {
-  try {
-    const raw = await fs.readFile(appConfig.dominantUsersFile, "utf8");
-    const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as
-      | DominantUserEntry[]
-      | { users?: DominantUserEntry[]; accounts?: DominantUserEntry[] };
-    const entries = Array.isArray(parsed) ? parsed : parsed.users ?? parsed.accounts ?? [];
+  const entries = await readDominantUserRecords({ requireFile: true });
 
-    return entries
-      .map((entry) => {
-        const username = normalizeUsername(entry.username ?? entry.account ?? "");
-        const password = entry.password ?? "";
+  return entries
+    .map((entry) => {
+      const username = normalizeUsername(entry.username ?? entry.account ?? "");
+      const password = entry.password ?? "";
 
-        if (!username || !password) {
-          return undefined;
-        }
+      if (!username || !password) {
+        return undefined;
+      }
 
-        return {
-          id: entry.id?.trim() || stableDominantUserId(username),
-          username,
-          passwordHash: password,
-          salt: "",
-          createdAt: new Date(0).toISOString()
-        } satisfies StoredUser;
-      })
-      .filter((user): user is StoredUser => Boolean(user));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new HttpError(
-        500,
-        `dominant 登录模式已启用，但根目录缺少 ${path.basename(appConfig.dominantUsersFile)}。`
-      );
-    }
-
-    throw error;
-  }
+      return {
+        id: entry.id?.trim() || stableDominantUserId(username),
+        username,
+        passwordHash: password,
+        salt: "",
+        createdAt: new Date(0).toISOString()
+      } satisfies StoredUser;
+    })
+    .filter((user): user is StoredUser => Boolean(user));
 };
 
 const writeJsonFile = async <T>(filePath: string, value: T): Promise<void> => {
@@ -163,7 +142,18 @@ const readSessions = async (): Promise<SessionRecord[]> => {
 const writeSessions = (sessions: SessionRecord[]): Promise<void> =>
   writeJsonFile(sessionsFile, sessions);
 
-const issueToken = async (user: AuthUser): Promise<AuthResponse> => {
+const toAuthUser = async (user: Pick<AuthUser, "id" | "username">): Promise<AuthUser> => ({
+  id: user.id,
+  username: user.username,
+  hasOpenAiApiKey: await userHasOpenAiApiKey({
+    id: user.id,
+    username: user.username,
+    hasOpenAiApiKey: false
+  })
+});
+
+const issueToken = async (rawUser: Pick<AuthUser, "id" | "username">): Promise<AuthResponse> => {
+  const user = await toAuthUser(rawUser);
   const token = createId("session");
   const expiresAt = new Date(Date.now() + appConfig.tokenTtlMs).toISOString();
   const sessions = await readSessions();
@@ -189,7 +179,7 @@ const resolveAuthorizedSessionUser = async (session: SessionRecord): Promise<Aut
   }
 
   if (appConfig.auth.mode !== "dominant") {
-    return session.user;
+    return toAuthUser(session.user);
   }
 
   if (session.authMode !== "dominant") {
@@ -203,10 +193,10 @@ const resolveAuthorizedSessionUser = async (session: SessionRecord): Promise<Aut
     throw new HttpError(401, "账号授权已变更，请重新登录。");
   }
 
-  return {
+  return toAuthUser({
     id: matchedUser.id,
     username: matchedUser.username
-  };
+  });
 };
 
 export const registerUser = async (request: AuthRequest): Promise<AuthResponse> => {

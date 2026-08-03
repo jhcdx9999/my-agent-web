@@ -10,6 +10,7 @@ import {
   login,
   logout,
   register,
+  saveOpenAiApiKey,
   sendChat,
   setAuthToken
 } from "./api";
@@ -57,6 +58,20 @@ const forgetAuth = (): void => {
   localStorage.removeItem("custom-gpt-user");
   localStorage.removeItem("custom-gpt-expires-at");
   clearAuthToken();
+};
+
+const updateRememberedUser = (patch: Partial<AuthUser>): void => {
+  if (!state.user) {
+    return;
+  }
+
+  const user = {
+    ...state.user,
+    ...patch
+  };
+
+  localStorage.setItem("custom-gpt-user", JSON.stringify(user));
+  updateState({ user });
 };
 
 const inferMimeType = (file: File): string => {
@@ -260,6 +275,8 @@ const handleAuthSuccess = (response: AuthResponse, statusText: string): void => 
     user: response.user,
     authToken: response.token,
     authExpiresAt: response.expiresAt,
+    apiKeyPanelOpen: !response.user.hasOpenAiApiKey,
+    apiKeyError: "",
     pending: false,
     messages: [],
     conversations: [],
@@ -354,8 +371,40 @@ const bindEvents = (): void => {
       conversations: [],
       activeConversationId: undefined,
       pendingUploads: [],
+      apiKeyPanelOpen: false,
+      apiKeyError: "",
       authError: ""
     });
+  });
+
+  document.querySelector<HTMLButtonElement>("#toggleApiKeyPanel")?.addEventListener("click", () => {
+    updateState({
+      apiKeyPanelOpen: !state.apiKeyPanelOpen,
+      apiKeyError: ""
+    });
+  });
+
+  document.querySelector<HTMLFormElement>("#apiKeyForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const formData = new FormData(form);
+    const apiKey = String(formData.get("apiKey") ?? "");
+
+    updateState({ apiKeySaving: true, apiKeyError: "" });
+
+    try {
+      const result = await saveOpenAiApiKey(apiKey);
+      updateRememberedUser({ hasOpenAiApiKey: result.hasOpenAiApiKey });
+      updateState({
+        apiKeySaving: false,
+        apiKeyPanelOpen: false,
+        apiKeyError: "",
+        statusText: "OpenAI API key 已保存"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateState({ apiKeySaving: false, apiKeyError: message });
+    }
   });
 
   const pauseButton = document.querySelector<HTMLButtonElement>("#pauseButton");
@@ -404,6 +453,15 @@ const bindEvents = (): void => {
     event.preventDefault();
     const prompt = textarea?.value.trim() ?? "";
     if ((!prompt && state.pendingUploads.length === 0) || state.pending || state.paused) {
+      return;
+    }
+
+    if (!state.user?.hasOpenAiApiKey) {
+      updateState({
+        apiKeyPanelOpen: true,
+        apiKeyError: "请先配置你的 OpenAI API key。",
+        statusText: "等待配置 OpenAI API key"
+      });
       return;
     }
 

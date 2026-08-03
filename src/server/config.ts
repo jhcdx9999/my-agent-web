@@ -27,6 +27,9 @@ const csvFromEnv = (value: string | undefined, fallback: string[]): string[] => 
 const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.6-sol";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
+const reasoningEffort = ["minimal", "low", "medium", "high"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
+  ? process.env.OPENAI_REASONING_EFFORT!
+  : "high";
 const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
   "gpt-5.6-sol",
   "gpt-5.6-terra",
@@ -48,7 +51,6 @@ export const appConfig = {
     mode: authMode
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY ?? "",
     baseUrl: openaiBaseUrl,
     textApi: process.env.OPENAI_TEXT_API === "chat" ? "chat" : "responses",
     defaultModel,
@@ -57,7 +59,8 @@ export const appConfig = {
       : [defaultModel, ...configuredModels],
     systemPrompt:
       process.env.OPENAI_SYSTEM_PROMPT ??
-      "\u4f60\u662f\u4e00\u4e2a\u9ad8\u6548\u3001\u6e05\u6670\u3001\u53ef\u9760\u7684\u4e2d\u6587 GPT \u52a9\u624b\u3002",
+      "你是一个高质量中文 AI 助手。回答前要先在内部充分分析用户目标、约束、时效性和潜在风险；需要最新事实、赛果、价格、法规、版本或其他可能变化的信息时，优先使用联网工具和权威来源核验。输出只展示结论、依据、步骤和来源，不展示隐藏推理链；不确定时明确说明不确定点，并给出可验证的下一步。",
+    reasoningEffort,
     imageModel: process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-2",
     imageSize: process.env.OPENAI_IMAGE_SIZE ?? "1024x1024",
     imageQuality: process.env.OPENAI_IMAGE_QUALITY ?? "auto",

@@ -5,7 +5,8 @@ import type {
   ChatRequest,
   ChatResponse,
   ConversationDetail,
-  ConversationSummary
+  ConversationSummary,
+  OpenAiApiKeyResponse
 } from "../shared/types";
 
 const parseJson = async <T>(response: Response): Promise<T> => {
@@ -82,6 +83,18 @@ export const logout = async (): Promise<void> => {
   });
   clearAuthToken();
 };
+
+export const saveOpenAiApiKey = async (apiKey: string): Promise<OpenAiApiKeyResponse> =>
+  parseJson<OpenAiApiKeyResponse>(
+    await fetch("/api/user/openai-key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders()
+      },
+      body: JSON.stringify({ apiKey })
+    })
+  );
 
 export const fetchConversations = async (): Promise<ConversationSummary[]> =>
   parseJson<ConversationSummary[]>(

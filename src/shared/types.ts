@@ -67,6 +67,7 @@ export interface AppConfigResponse {
 export interface AuthUser {
   id: string;
   username: string;
+  hasOpenAiApiKey: boolean;
 }
 
 export interface AuthRequest {
@@ -78,6 +79,14 @@ export interface AuthResponse {
   user: AuthUser;
   token: string;
   expiresAt: string;
+}
+
+export interface OpenAiApiKeyRequest {
+  apiKey: string;
+}
+
+export interface OpenAiApiKeyResponse {
+  hasOpenAiApiKey: boolean;
 }
 
 export interface ConversationSummary {

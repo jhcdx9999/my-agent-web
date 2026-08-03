@@ -228,6 +228,20 @@ select:disabled {
   font-weight: 700;
 }
 
+.api-key-button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.api-key-button.needs-key {
+  border-color: #ef8b8b;
+  background: color-mix(in srgb, #ef4444 12%, var(--panel));
+}
+
 .conversation-list {
   display: grid;
   align-content: start;
@@ -359,6 +373,54 @@ select:disabled {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+}
+
+.api-key-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 360px) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.api-key-panel div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.api-key-panel strong,
+.api-key-panel span {
+  overflow-wrap: anywhere;
+}
+
+.api-key-panel span,
+.api-key-error {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.api-key-panel input {
+  min-height: 38px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--input);
+  color: var(--text);
+  padding: 0 12px;
+  outline: none;
+}
+
+.api-key-panel input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.api-key-error {
+  grid-column: 1 / -1;
+  color: #ef8b8b;
 }
 
 .message-list {
@@ -772,6 +834,14 @@ select:disabled {
 
   .message-list {
     padding: 18px 14px;
+  }
+
+  .api-key-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .api-key-panel .send-button {
+    width: 100%;
   }
 
   .message {

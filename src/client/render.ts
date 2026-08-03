@@ -166,6 +166,9 @@ export const renderApp = (state: AppState): string => {
           </div>
           <button id="logoutButton" type="button">退出</button>
         </div>
+        <button class="api-key-button ${state.user.hasOpenAiApiKey ? "is-ready" : "needs-key"}" id="toggleApiKeyPanel" type="button">
+          ${state.user.hasOpenAiApiKey ? "OpenAI Key 已配置" : "配置 OpenAI Key"}
+        </button>
         <button class="new-chat-button" id="newConversationButton" type="button">新建对话</button>
         <div class="conversation-list">
           ${
@@ -194,6 +197,28 @@ export const renderApp = (state: AppState): string => {
         </header>
 
         <section class="chat-panel" aria-label="聊天窗口">
+          ${
+            state.apiKeyPanelOpen || !state.user.hasOpenAiApiKey
+              ? `<form class="api-key-panel" id="apiKeyForm">
+                  <div>
+                    <strong>${state.user.hasOpenAiApiKey ? "更新 OpenAI API key" : "请先配置 OpenAI API key"}</strong>
+                    <span>密钥只保存在服务器根目录 a.json，不会显示在页面中。</span>
+                  </div>
+                  <input
+                    id="openAiApiKeyInput"
+                    name="apiKey"
+                    type="password"
+                    autocomplete="off"
+                    placeholder="sk-..."
+                    required
+                  />
+                  <button class="send-button" type="submit" ${state.apiKeySaving ? "disabled" : ""}>
+                    ${state.apiKeySaving ? "保存中" : "保存"}
+                  </button>
+                  ${state.apiKeyError ? `<small class="api-key-error">${escapeHtml(state.apiKeyError)}</small>` : ""}
+                </form>`
+              : ""
+          }
           <div class="message-list" id="messageList">
             ${
               state.messages.length

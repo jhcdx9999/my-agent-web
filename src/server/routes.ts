@@ -3,6 +3,7 @@ import { appConfig } from "./config";
 import { HttpError, getErrorMessage } from "./errors";
 import { processChat } from "./services/chatService";
 import { getGeneratedFilePath } from "./services/fileStore";
+import { saveUserOpenAiApiKey, userHasOpenAiApiKey } from "./services/userConfigService";
 import {
   authenticateToken,
   loginUser,
@@ -88,6 +89,27 @@ export const createRouter = (): express.Router => {
     }
   });
 
+  router.get("/user/openai-key", requireAuth, async (request: AuthedRequest, response, next) => {
+    try {
+      response.json({
+        hasOpenAiApiKey: await userHasOpenAiApiKey(request.user!)
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/user/openai-key", requireAuth, async (request: AuthedRequest, response, next) => {
+    try {
+      await saveUserOpenAiApiKey(request.user!, String(request.body?.apiKey ?? ""));
+      response.json({
+        hasOpenAiApiKey: true
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   router.get("/conversations", requireAuth, async (request: AuthedRequest, response, next) => {
     try {
       response.json(await listConversations(request.user!));
@@ -134,7 +156,7 @@ export const createRouter = (): express.Router => {
           model: body.model ?? appConfig.openai.defaultModel,
           conversationId: body.conversationId,
           paused: body.paused
-      });
+      }, user);
       const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
 
       response.json({

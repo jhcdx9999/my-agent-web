@@ -68,6 +68,11 @@ type ResponsesTool = {
   type: "web_search_preview";
 };
 
+type OpenAiRequestOptions = {
+  apiKey: string;
+  webSearch?: boolean;
+};
+
 type ImageResponse = {
   data?: Array<{
     b64_json?: string;
@@ -78,12 +83,13 @@ type ImageResponse = {
   };
 };
 
-const requireApiKey = (): string => {
-  if (!appConfig.openai.apiKey) {
-    throw new HttpError(500, "OPENAI_API_KEY is not configured.");
+const requireApiKey = (apiKey: string): string => {
+  const key = apiKey.trim();
+  if (!key) {
+    throw new HttpError(400, "请先配置你的 OpenAI API key。");
   }
 
-  return appConfig.openai.apiKey;
+  return key;
 };
 
 const parseResponseJson = async <T>(response: Response): Promise<T> => {
@@ -232,24 +238,26 @@ const normalizeTextContent = (
 
 const createChatCompletion = async (
   messages: ChatApiMessage[],
-  model: string
+  model: string,
+  options: OpenAiRequestOptions
 ): Promise<{ content: string; usage?: ChatCompletionResponse["usage"] }> => {
   if (messages.some((message) => message.attachments?.length)) {
     throw new HttpError(
       400,
-      "Uploaded files require OPENAI_TEXT_API=responses. Chat Completions mode cannot process file attachments."
+      "上传文件需要 OPENAI_TEXT_API=responses。Chat Completions 模式不能处理文件附件。"
     );
   }
 
   const response = await callOpenAi("/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${requireApiKey()}`,
+      Authorization: `Bearer ${requireApiKey(options.apiKey)}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
       model,
-      messages
+      messages,
+      temperature: 0.2
     })
   });
 
@@ -265,7 +273,7 @@ const createChatCompletion = async (
 const createResponsesCompletion = async (
   messages: ChatApiMessage[],
   model: string,
-  options: { webSearch?: boolean } = {}
+  options: OpenAiRequestOptions
 ): Promise<{ content: string; usage?: ChatCompletionResponse["usage"] }> => {
   const system = messages.find((message) => message.role === "system")?.content;
   const hasAttachments = messages.some((message) => message.attachments?.length);
@@ -302,13 +310,16 @@ const createResponsesCompletion = async (
   const response = await callOpenAi("/responses", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${requireApiKey()}`,
+      Authorization: `Bearer ${requireApiKey(options.apiKey)}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
       model,
       instructions: system,
       input,
+      reasoning: {
+        effort: appConfig.openai.reasoningEffort
+      },
       ...(options.webSearch && appConfig.search.openaiHostedTool
         ? { tools: [{ type: "web_search_preview" } satisfies ResponsesTool] }
         : {}),
@@ -339,17 +350,18 @@ const createResponsesCompletion = async (
 export const createTextCompletion = async (
   messages: ChatApiMessage[],
   model: string,
-  options: { webSearch?: boolean } = {}
+  options: OpenAiRequestOptions
 ): Promise<{ content: string; usage?: ChatCompletionResponse["usage"] }> => {
   if (appConfig.openai.textApi === "chat") {
-    return createChatCompletion(messages, model);
+    return createChatCompletion(messages, model, options);
   }
 
   return createResponsesCompletion(messages, model, options);
 };
 
 export const generateImage = async (
-  prompt: string
+  prompt: string,
+  apiKey: string
 ): Promise<{ buffer: Buffer; mimeType: string; extension: "png" | "jpg" | "webp" }> => {
   const outputFormat = appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat;
   const extension = outputFormat === "jpg" ? "jpg" : outputFormat === "webp" ? "webp" : "png";
@@ -358,7 +370,7 @@ export const generateImage = async (
   const response = await callOpenAi("/images/generations", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${requireApiKey()}`,
+      Authorization: `Bearer ${requireApiKey(apiKey)}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({

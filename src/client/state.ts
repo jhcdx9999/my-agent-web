@@ -15,6 +15,9 @@ export interface AppState {
   authLoginMode: AuthLoginMode;
   authError: string;
   authExpiresAt?: string;
+  apiKeyPanelOpen: boolean;
+  apiKeyError: string;
+  apiKeySaving: boolean;
   messages: ChatMessage[];
   conversations: ConversationSummary[];
   activeConversationId?: string;
@@ -35,6 +38,9 @@ export const createInitialState = (): AppState => ({
   authMode: "login",
   authLoginMode: "free",
   authError: "",
+  apiKeyPanelOpen: false,
+  apiKeyError: "",
+  apiKeySaving: false,
   messages: [],
   conversations: [],
   selectedModel: "",

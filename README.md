@@ -35,11 +35,11 @@ npm run dev
 复制 `.env.example` 为 `.env`，并配置：
 
 ```ini
-OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_TEXT_API=responses
 OPENAI_DEFAULT_MODEL=gpt-5.6-sol
 OPENAI_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
+OPENAI_REASONING_EFFORT=high
 
 OPENAI_IMAGE_MODEL=gpt-image-2
 OPENAI_IMAGE_SIZE=1024x1024
@@ -62,7 +62,9 @@ BRAVE_SEARCH_API_KEY=
 TAVILY_API_KEY=
 ```
 
-`OPENAI_BASE_URL` 要填写完整 API 根地址，例如官方 OpenAI 是 `https://api.openai.com/v1`。`OPENAI_TEXT_API` 默认使用 Responses API；如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`，但上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`，且上游服务需要支持 `input_image` / `input_file`。
+OpenAI API key 不再配置在 `.env` 中，而是按用户保存在根目录 `a.json`。如果 `a.json` 中没有某个用户的 `openaiApiKey`，该用户登录后页面会要求输入；用户可重复输入并覆盖旧 key。
+
+`OPENAI_BASE_URL` 要填写完整 API 根地址，例如官方 OpenAI 是 `https://api.openai.com/v1`。想获得最佳回答质量、官方联网搜索和 reasoning 能力，推荐使用官方 OpenAI API 并保持 `OPENAI_TEXT_API=responses`。如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`，但上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`，且上游服务需要支持 `input_image` / `input_file`。
 
 如果上传后返回 `Upstream request failed`，通常是第三方转发服务不支持 Responses 文件输入、模型不支持视觉/文件能力，或 `OPENAI_BASE_URL` 缺少 `/v1` 这类路径。
 
@@ -84,7 +86,8 @@ cp a.example.json a.json
 [
   {
     "username": "admin",
-    "password": "your-strong-password"
+    "password": "your-strong-password",
+    "openaiApiKey": ""
   }
 ]
 ```
@@ -96,13 +99,16 @@ cp a.example.json a.json
   "users": [
     {
       "username": "admin",
-      "password": "your-strong-password"
+      "password": "your-strong-password",
+      "openaiApiKey": ""
     }
   ]
 }
 ```
 
 每个 dominant 账号仍会按用户隔离保存历史对话。默认用户目录由账号名稳定生成，例如 `storage/users/dominant_xxx/`；如果你想固定历史目录，也可以给账号显式设置 `"id"`，之后只要这个 `id` 不变，历史会话就会继续归入同一目录。
+
+`openaiApiKey` 可以为空。为空时，用户登录后在网页中输入自己的 key，后端会写回 `a.json`；再次输入会覆盖旧 key。
 
 ## Ubuntu 运行
 

@@ -5,8 +5,9 @@ import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
 import { writeGeneratedFile } from "./fileStore";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
+import { getUserOpenAiApiKey } from "./userConfigService";
 import { HttpError } from "../errors";
-import type { ChatAttachment, ChatMessage, ChatRequest, ChatResponse } from "../../shared/types";
+import type { AuthUser, ChatAttachment, ChatMessage, ChatRequest, ChatResponse } from "../../shared/types";
 
 const getLatestPrompt = (messages: ChatMessage[]): string => messages[messages.length - 1]?.content ?? "";
 
@@ -145,6 +146,10 @@ const withWebSearchContext = async (prompt: string): Promise<string> => {
     return prompt;
   }
 
+  if (appConfig.openai.textApi === "responses" && appConfig.search.openaiHostedTool) {
+    return prompt;
+  }
+
   const results = await searchWeb(prompt);
   return `${formatSearchContext(prompt, results)}\n\n用户原始问题：\n${prompt}`;
 };
@@ -167,7 +172,7 @@ const messagesWithWebSearchContext = async (messages: ChatMessage[]): Promise<Ch
   ];
 };
 
-export const processChat = async (request: ChatRequest): Promise<ChatResponse> => {
+export const processChat = async (request: ChatRequest, user: AuthUser): Promise<ChatResponse> => {
   const normalizedMessages = normalizeUploads(request.messages);
 
   if (request.paused) {
@@ -180,6 +185,10 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
   const model = appConfig.openai.models.includes(request.model)
     ? request.model
     : appConfig.openai.defaultModel;
+  const apiKey = await getUserOpenAiApiKey(user);
+  if (!apiKey) {
+    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
+  }
   const intent = detectIntent(normalizedMessages);
   const latestPrompt = getLatestPrompt(normalizedMessages);
   const hasUploadedAttachments = normalizedMessages.some((message) =>
@@ -191,7 +200,7 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
   }
 
   if (intent === "image" && !hasUploadedAttachments) {
-    const image = await generateImage(latestPrompt);
+    const image = await generateImage(latestPrompt, apiKey);
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,
       image.buffer,
@@ -217,7 +226,7 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
       role: "user",
       content: buildFilePrompt(latestPromptWithSearch),
       createdAt: new Date().toISOString()
-    }]), model, { webSearch: shouldSearch });
+    }]), model, { apiKey, webSearch: shouldSearch });
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-document.md`,
       completion.content,
@@ -243,7 +252,7 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
       role: "user",
       content: buildDataPlanPrompt(latestPromptWithSearch),
       createdAt: new Date().toISOString()
-    }]), model, { webSearch: shouldSearch });
+    }]), model, { apiKey, webSearch: shouldSearch });
     const code = stripMarkdownFence(codeCompletion.content);
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
@@ -273,7 +282,7 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
   const completion = await createTextCompletion(
     toApiMessages(shouldSearch ? await messagesWithWebSearchContext(normalizedMessages) : normalizedMessages),
     model,
-    { webSearch: shouldSearch }
+    { apiKey, webSearch: shouldSearch }
   );
 
   return {
