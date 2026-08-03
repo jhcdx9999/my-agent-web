@@ -456,10 +456,17 @@ const bindEvents = (): void => {
       return;
     }
 
-    if (!state.user?.hasOpenAiApiKey) {
+    const promptNeedsImage = /(生成|画|绘制|做一张|来一张|create|generate|draw|image|picture|photo|海报|插画|图片)/i.test(prompt);
+    const requiresOpenAiApiKey =
+      state.requiresOpenAiApiKeyForText || state.pendingUploads.length > 0 || promptNeedsImage;
+
+    if (requiresOpenAiApiKey && !state.user?.hasOpenAiApiKey) {
       updateState({
         apiKeyPanelOpen: true,
-        apiKeyError: "请先配置你的 OpenAI API key。",
+        apiKeyError:
+          state.textRuntime === "codex" && !state.requiresOpenAiApiKeyForText
+            ? "当前文本由 Codex 处理，但上传附件或生成图片仍需要 OpenAI API key。"
+            : "请先配置你的 OpenAI API key。",
         statusText: "等待配置 OpenAI API key"
       });
       return;
@@ -525,6 +532,8 @@ const loadConfig = async (): Promise<void> => {
       authMode: readAuthMode(config.auth.mode),
       availableModels: config.models,
       selectedModel: config.defaultModel || config.models[0] || "",
+      textRuntime: config.textRuntime,
+      requiresOpenAiApiKeyForText: config.requiresOpenAiApiKeyForText,
       uploadAccept: config.upload.accept,
       uploadMaxFiles: config.upload.maxFiles,
       uploadMaxBytesPerFile: config.upload.maxBytesPerFile,

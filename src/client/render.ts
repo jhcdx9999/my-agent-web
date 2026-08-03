@@ -167,7 +167,13 @@ export const renderApp = (state: AppState): string => {
           <button id="logoutButton" type="button">退出</button>
         </div>
         <button class="api-key-button ${state.user.hasOpenAiApiKey ? "is-ready" : "needs-key"}" id="toggleApiKeyPanel" type="button">
-          ${state.user.hasOpenAiApiKey ? "OpenAI Key 已配置" : "配置 OpenAI Key"}
+          ${
+            state.user.hasOpenAiApiKey
+              ? "OpenAI Key 已配置"
+              : state.requiresOpenAiApiKeyForText
+                ? "配置 OpenAI Key"
+                : "OpenAI Key 可选"
+          }
         </button>
         <button class="new-chat-button" id="newConversationButton" type="button">新建对话</button>
         <div class="conversation-list">
@@ -198,11 +204,15 @@ export const renderApp = (state: AppState): string => {
 
         <section class="chat-panel" aria-label="聊天窗口">
           ${
-            state.apiKeyPanelOpen || !state.user.hasOpenAiApiKey
+            state.apiKeyPanelOpen || (state.requiresOpenAiApiKeyForText && !state.user.hasOpenAiApiKey)
               ? `<form class="api-key-panel" id="apiKeyForm">
                   <div>
-                    <strong>${state.user.hasOpenAiApiKey ? "更新 OpenAI API key" : "请先配置 OpenAI API key"}</strong>
-                    <span>密钥只保存在服务器根目录 a.json，不会显示在页面中。</span>
+                    <strong>${state.user.hasOpenAiApiKey ? "更新 OpenAI API key" : "配置 OpenAI API key"}</strong>
+                    <span>${
+                      state.requiresOpenAiApiKeyForText
+                        ? "文本对话、图片和上传能力会使用该密钥。"
+                        : "Codex 文本模式下可选；生成图片或分析图片/PDF/文件时仍会使用。"
+                    }密钥只保存在服务器根目录 a.json。</span>
                   </div>
                   <input
                     id="openAiApiKeyInput"
@@ -275,6 +285,7 @@ export const renderApp = (state: AppState): string => {
                     )
                     .join("")}
                 </select>
+                <span class="runtime-pill">${state.textRuntime === "codex" ? "Codex" : "OpenAI"}</span>
                 <button class="pause-button" id="pauseButton" type="button" aria-pressed="${state.paused}">
                   ${state.paused ? "继续" : "暂停"}
                 </button>

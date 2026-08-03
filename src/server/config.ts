@@ -1,6 +1,6 @@
 import "dotenv/config";
 import path from "node:path";
-import type { AuthLoginMode } from "../shared/types";
+import type { AuthLoginMode, TextRuntime } from "../shared/types";
 
 const boolFromEnv = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined || value.trim() === "") {
@@ -27,13 +27,25 @@ const csvFromEnv = (value: string | undefined, fallback: string[]): string[] => 
 const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.6-sol";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
+const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
 const reasoningEffort = ["minimal", "low", "medium", "high"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
   ? process.env.OPENAI_REASONING_EFFORT!
+  : "high";
+const codexReasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh"].includes(
+  process.env.CODEX_REASONING_EFFORT ?? ""
+)
+  ? process.env.CODEX_REASONING_EFFORT!
   : "high";
 const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna"
+]);
+const configuredCodexModels = csvFromEnv(process.env.CODEX_MODELS, [
+  process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.1-codex-max",
+  "gpt-5-codex",
+  "gpt-5.1",
+  "gpt-5"
 ]);
 
 export const appConfig = {
@@ -49,6 +61,9 @@ export const appConfig = {
   tokenTtlMs: intFromEnv(process.env.AUTH_TOKEN_TTL_HOURS, 120) * 60 * 60 * 1000,
   auth: {
     mode: authMode
+  },
+  ai: {
+    textRuntime
   },
   openai: {
     baseUrl: openaiBaseUrl,
@@ -66,15 +81,28 @@ export const appConfig = {
     imageQuality: process.env.OPENAI_IMAGE_QUALITY ?? "auto",
     imageFormat: process.env.OPENAI_IMAGE_FORMAT ?? "png"
   },
+  codex: {
+    command: process.env.CODEX_COMMAND ?? "codex",
+    defaultModel: process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0] ?? "gpt-5.1-codex-max",
+    models: configuredCodexModels.includes(process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0])
+      ? configuredCodexModels
+      : [process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.1-codex-max", ...configuredCodexModels],
+    reasoningEffort: codexReasoningEffort,
+    timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 180000),
+    workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),
+    sandbox: process.env.CODEX_SANDBOX === "workspace-write" ? "workspace-write" : "read-only",
+    approvalPolicy: process.env.CODEX_APPROVAL_POLICY ?? "on-request"
+  },
   search: {
     enabled: boolFromEnv(process.env.ENABLE_WEB_SEARCH, true),
     provider: process.env.WEB_SEARCH_PROVIDER ?? "auto",
     maxResults: intFromEnv(process.env.WEB_SEARCH_MAX_RESULTS, 5),
+    maxQueries: intFromEnv(process.env.WEB_SEARCH_MAX_QUERIES, 4),
     timeoutMs: intFromEnv(process.env.WEB_SEARCH_TIMEOUT_MS, 10000),
     fetchPages: boolFromEnv(process.env.WEB_SEARCH_FETCH_PAGES, true),
-    maxFetchPages: intFromEnv(process.env.WEB_SEARCH_MAX_FETCH_PAGES, 2),
-    maxPageChars: intFromEnv(process.env.WEB_SEARCH_MAX_PAGE_CHARS, 2500),
-    maxContextChars: intFromEnv(process.env.WEB_SEARCH_MAX_CONTEXT_CHARS, 8000),
+    maxFetchPages: intFromEnv(process.env.WEB_SEARCH_MAX_FETCH_PAGES, 4),
+    maxPageChars: intFromEnv(process.env.WEB_SEARCH_MAX_PAGE_CHARS, 12000),
+    maxContextChars: intFromEnv(process.env.WEB_SEARCH_MAX_CONTEXT_CHARS, 20000),
     userAgent: process.env.WEB_SEARCH_USER_AGENT ?? "CustomGPTWeb/0.1",
     serperApiKey: process.env.SERPER_API_KEY ?? "",
     braveApiKey: process.env.BRAVE_SEARCH_API_KEY ?? "",

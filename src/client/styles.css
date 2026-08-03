@@ -746,6 +746,20 @@ select:disabled {
   margin-left: auto;
 }
 
+.runtime-pill {
+  display: inline-grid;
+  place-items: center;
+  min-width: 56px;
+  min-height: 38px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
 .composer select,
 .pause-button,
 .send-button {

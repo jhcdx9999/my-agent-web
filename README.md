@@ -1,6 +1,6 @@
 # Custom GPT Web
 
-一个模块化 TypeScript 全栈项目：前端是 ChatGPT 风格聊天窗口，后端代理 OpenAI 或 OpenAI 兼容 API，支持文字对话、上传附件、图片生成、文件下载和本地数据整理。
+一个模块化 TypeScript 全栈项目：前端是 ChatGPT 风格聊天窗口，后端可选择代理 OpenAI/OpenAI 兼容 API，或通过 Codex CLI app-server 适配层处理文本对话，支持上传附件、图片生成、文件下载和本地数据整理。
 
 ## 功能
 
@@ -36,10 +36,20 @@ npm run dev
 
 ```ini
 OPENAI_BASE_URL=https://api.openai.com/v1
+AI_TEXT_RUNTIME=openai
 OPENAI_TEXT_API=responses
 OPENAI_DEFAULT_MODEL=gpt-5.6-sol
 OPENAI_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
 OPENAI_REASONING_EFFORT=high
+
+CODEX_COMMAND=codex
+CODEX_DEFAULT_MODEL=gpt-5.1-codex-max
+CODEX_MODELS=gpt-5.1-codex-max,gpt-5-codex,gpt-5.1,gpt-5
+CODEX_REASONING_EFFORT=high
+CODEX_TIMEOUT_MS=180000
+CODEX_WORKING_DIR=.
+CODEX_SANDBOX=read-only
+CODEX_APPROVAL_POLICY=on-request
 
 OPENAI_IMAGE_MODEL=gpt-image-2
 OPENAI_IMAGE_SIZE=1024x1024
@@ -63,6 +73,26 @@ TAVILY_API_KEY=
 ```
 
 OpenAI API key 不再配置在 `.env` 中，而是按用户保存在根目录 `a.json`。如果 `a.json` 中没有某个用户的 `openaiApiKey`，该用户登录后页面会要求输入；用户可重复输入并覆盖旧 key。
+
+`AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，并使用 Codex CLI 自己的登录态/配置；网页模型下拉会显示 `CODEX_MODELS`。生成图片、上传图片/PDF/文件仍走 OpenAI Responses/Image API，因此这些能力仍需要用户配置 OpenAI API key。
+
+使用 Codex 文本运行时前，先在服务器确认：
+
+```bash
+codex --version
+codex app-server --help
+```
+
+如果这两个命令不能运行，请先安装并登录 Codex CLI，再把 `.env` 中设置为：
+
+```ini
+AI_TEXT_RUNTIME=codex
+CODEX_COMMAND=codex
+CODEX_DEFAULT_MODEL=gpt-5.1-codex-max
+CODEX_REASONING_EFFORT=high
+CODEX_SANDBOX=read-only
+CODEX_APPROVAL_POLICY=on-request
+```
 
 `OPENAI_BASE_URL` 要填写完整 API 根地址，例如官方 OpenAI 是 `https://api.openai.com/v1`。想获得最佳回答质量、官方联网搜索和 reasoning 能力，推荐使用官方 OpenAI API 并保持 `OPENAI_TEXT_API=responses`。如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`，但上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`，且上游服务需要支持 `input_image` / `input_file`。
 

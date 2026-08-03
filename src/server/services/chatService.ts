@@ -1,6 +1,7 @@
 import { appConfig } from "../config";
 import { createId } from "../utils/id";
 import { createTextCompletion, generateImage } from "./openaiClient";
+import { createCodexCompletion } from "./codexAppServerClient";
 import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
 import { writeGeneratedFile } from "./fileStore";
@@ -152,6 +153,10 @@ const withWebSearchContext = async (prompt: string): Promise<string> => {
 
 const needsWebSearch = (prompt: string): boolean => shouldUseWebSearch(prompt);
 
+const shouldUseCodexTextRuntime = (messages: ChatMessage[]): boolean =>
+  appConfig.ai.textRuntime === "codex" &&
+  !messages.some((message) => message.attachments?.some((attachment) => attachment.source === "uploaded"));
+
 const shouldTryHostedWebSearch = (shouldSearch: boolean): boolean =>
   shouldSearch && appConfig.openai.textApi === "responses" && appConfig.search.openaiHostedTool;
 
@@ -173,8 +178,22 @@ const isHostedWebSearchFailure = (error: unknown): boolean => {
 const createTextCompletionWithSearchFallback = async (
   messages: ChatMessage[],
   model: string,
-  options: { apiKey: string; shouldSearch: boolean }
+  options: { apiKey?: string; shouldSearch: boolean }
 ) => {
+  if (shouldUseCodexTextRuntime(messages)) {
+    return createCodexCompletion(
+      toApiMessages(await messagesWithWebSearchContext(messages)).map((message) => ({
+        role: message.role,
+        content: message.content
+      })),
+      model
+    );
+  }
+
+  if (!options.apiKey) {
+    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
+  }
+
   if (!options.shouldSearch) {
     return createTextCompletion(toApiMessages(messages), model, { apiKey: options.apiKey, webSearch: false });
   }
@@ -230,25 +249,32 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     };
   }
 
-  const model = appConfig.openai.models.includes(request.model)
+  const openAiModel = appConfig.openai.models.includes(request.model)
     ? request.model
     : appConfig.openai.defaultModel;
+  const codexModel = appConfig.codex.models.includes(request.model)
+    ? request.model
+    : appConfig.codex.defaultModel;
   const apiKey = await getUserOpenAiApiKey(user);
-  if (!apiKey) {
-    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
-  }
   const intent = detectIntent(normalizedMessages);
   const latestPrompt = getLatestPrompt(normalizedMessages);
   const hasUploadedAttachments = normalizedMessages.some((message) =>
     message.attachments?.some((attachment) => attachment.source === "uploaded")
   );
+  const textModel = appConfig.ai.textRuntime === "codex" && !hasUploadedAttachments ? codexModel : openAiModel;
+  const requiresOpenAiApiKey =
+    intent === "image" || hasUploadedAttachments || appConfig.ai.textRuntime !== "codex";
+
+  if (requiresOpenAiApiKey && !apiKey) {
+    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
+  }
 
   if (hasUploadedAttachments && appConfig.openai.textApi === "chat") {
     throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
   if (intent === "image" && !hasUploadedAttachments) {
-    const image = await generateImage(latestPrompt, apiKey);
+    const image = await generateImage(latestPrompt, apiKey!);
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,
       image.buffer,
@@ -274,7 +300,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
       content: buildFilePrompt(latestPrompt),
       createdAt: new Date().toISOString()
     }];
-    const completion = await createTextCompletionWithSearchFallback(fileMessages, model, {
+    const completion = await createTextCompletionWithSearchFallback(fileMessages, textModel, {
       apiKey,
       shouldSearch
     });
@@ -303,7 +329,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
       content: buildDataPlanPrompt(latestPrompt),
       createdAt: new Date().toISOString()
     }];
-    const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, model, {
+    const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, textModel, {
       apiKey,
       shouldSearch
     });
@@ -333,7 +359,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   }
 
   const shouldSearch = needsWebSearch(latestPrompt);
-  const completion = await createTextCompletionWithSearchFallback(normalizedMessages, model, {
+  const completion = await createTextCompletionWithSearchFallback(normalizedMessages, textModel, {
     apiKey,
     shouldSearch
   });

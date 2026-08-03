@@ -53,9 +53,15 @@ export const createRouter = (): express.Router => {
   const router = express.Router();
 
   router.get("/config", (_request, response) => {
+    const textRuntime = appConfig.ai.textRuntime;
+    const models = textRuntime === "codex" ? appConfig.codex.models : appConfig.openai.models;
+    const defaultModel = textRuntime === "codex" ? appConfig.codex.defaultModel : appConfig.openai.defaultModel;
+
     response.json({
-      defaultModel: appConfig.openai.defaultModel,
-      models: appConfig.openai.models,
+      defaultModel,
+      models,
+      textRuntime,
+      requiresOpenAiApiKeyForText: textRuntime !== "codex",
       themes: ["white", "sapphire", "black"],
       auth: {
         mode: appConfig.auth.mode
@@ -161,7 +167,9 @@ export const createRouter = (): express.Router => {
 
       const chatResponse = await processChat({
           messages: body.messages,
-          model: body.model ?? appConfig.openai.defaultModel,
+          model: body.model ?? (appConfig.ai.textRuntime === "codex"
+            ? appConfig.codex.defaultModel
+            : appConfig.openai.defaultModel),
           conversationId: body.conversationId,
           paused: body.paused
       }, user);

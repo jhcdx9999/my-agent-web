@@ -23,6 +23,8 @@ export interface AppState {
   activeConversationId?: string;
   selectedModel: string;
   availableModels: string[];
+  textRuntime: "openai" | "codex";
+  requiresOpenAiApiKeyForText: boolean;
   pendingUploads: ChatAttachment[];
   uploadAccept: string;
   uploadMaxFiles: number;
@@ -45,6 +47,8 @@ export const createInitialState = (): AppState => ({
   conversations: [],
   selectedModel: "",
   availableModels: [],
+  textRuntime: "openai",
+  requiresOpenAiApiKeyForText: true,
   pendingUploads: [],
   uploadAccept: "image/*,.pdf,.txt,.md,.csv,.json",
   uploadMaxFiles: 5,

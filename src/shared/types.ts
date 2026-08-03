@@ -8,6 +8,8 @@ export type ThemeName = "white" | "sapphire" | "black";
 
 export type AuthLoginMode = "free" | "dominant";
 
+export type TextRuntime = "openai" | "codex";
+
 export interface ChatAttachment {
   id: string;
   kind: AttachmentKind;
@@ -53,6 +55,8 @@ export interface ChatResponse {
 export interface AppConfigResponse {
   defaultModel: string;
   models: string[];
+  textRuntime: TextRuntime;
+  requiresOpenAiApiKeyForText: boolean;
   themes: ThemeName[];
   auth: {
     mode: AuthLoginMode;
