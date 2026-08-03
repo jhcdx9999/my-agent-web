@@ -542,8 +542,8 @@ const loadConfig = async (): Promise<void> => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     updateState({
-      availableModels: ["gpt-5.6-sol"],
-      selectedModel: "gpt-5.6-sol",
+      availableModels: ["gpt-5.5"],
+      selectedModel: "gpt-5.5",
       statusText: `配置加载失败：${message}`
     });
   }

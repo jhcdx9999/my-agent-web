@@ -24,25 +24,27 @@ const csvFromEnv = (value: string | undefined, fallback: string[]): string[] => 
   return items && items.length > 0 ? items : fallback;
 };
 
-const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.6-sol";
+const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.5";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
-const reasoningEffort = ["minimal", "low", "medium", "high"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
+const reasoningEffort = ["minimal", "low", "medium", "high", "xhigh"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
   ? process.env.OPENAI_REASONING_EFFORT!
-  : "high";
+  : "xhigh";
 const codexReasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh"].includes(
   process.env.CODEX_REASONING_EFFORT ?? ""
 )
   ? process.env.CODEX_REASONING_EFFORT!
-  : "high";
+  : "xhigh";
 const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
+  "gpt-5.5",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna"
 ]);
 const configuredCodexModels = csvFromEnv(process.env.CODEX_MODELS, [
-  process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.1-codex-max",
+  process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.5",
+  "gpt-5.5",
   "gpt-5-codex",
   "gpt-5.1",
   "gpt-5"
@@ -83,10 +85,10 @@ export const appConfig = {
   },
   codex: {
     command: process.env.CODEX_COMMAND ?? "codex",
-    defaultModel: process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0] ?? "gpt-5.1-codex-max",
+    defaultModel: process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0] ?? "gpt-5.5",
     models: configuredCodexModels.includes(process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0])
       ? configuredCodexModels
-      : [process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.1-codex-max", ...configuredCodexModels],
+      : [process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.5", ...configuredCodexModels],
     reasoningEffort: codexReasoningEffort,
     timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 180000),
     workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),

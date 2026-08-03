@@ -38,14 +38,14 @@ npm run dev
 OPENAI_BASE_URL=https://api.openai.com/v1
 AI_TEXT_RUNTIME=openai
 OPENAI_TEXT_API=responses
-OPENAI_DEFAULT_MODEL=gpt-5.6-sol
-OPENAI_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
-OPENAI_REASONING_EFFORT=high
+OPENAI_DEFAULT_MODEL=gpt-5.5
+OPENAI_MODELS=gpt-5.5,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
+OPENAI_REASONING_EFFORT=xhigh
 
 CODEX_COMMAND=codex
-CODEX_DEFAULT_MODEL=gpt-5.1-codex-max
-CODEX_MODELS=gpt-5.1-codex-max,gpt-5-codex,gpt-5.1,gpt-5
-CODEX_REASONING_EFFORT=high
+CODEX_DEFAULT_MODEL=gpt-5.5
+CODEX_MODELS=gpt-5.5,gpt-5-codex,gpt-5.1,gpt-5
+CODEX_REASONING_EFFORT=xhigh
 CODEX_TIMEOUT_MS=180000
 CODEX_WORKING_DIR=.
 CODEX_SANDBOX=read-only
@@ -88,8 +88,8 @@ codex app-server --help
 ```ini
 AI_TEXT_RUNTIME=codex
 CODEX_COMMAND=codex
-CODEX_DEFAULT_MODEL=gpt-5.1-codex-max
-CODEX_REASONING_EFFORT=high
+CODEX_DEFAULT_MODEL=gpt-5.5
+CODEX_REASONING_EFFORT=xhigh
 CODEX_SANDBOX=read-only
 CODEX_APPROVAL_POLICY=on-request
 ```
