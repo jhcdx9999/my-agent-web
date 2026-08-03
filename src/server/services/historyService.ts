@@ -3,6 +3,7 @@ import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
 import { appConfig } from "../config";
+import { HttpError } from "../errors";
 import { ensureDirectory, safeGeneratedPath } from "../utils/fs";
 import { createId } from "../utils/id";
 import { userStorageDir } from "./authService";
@@ -14,7 +15,9 @@ import type {
   ConversationSummary
 } from "../../shared/types";
 
-type StoredConversation = ConversationDetail;
+type StoredConversation = ConversationDetail & {
+  titleLocked?: boolean;
+};
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
@@ -125,15 +128,17 @@ export const saveConversation = async (
   const existing = conversationId ? await readConversation(user, conversationId) : undefined;
   const id = existing?.id ?? conversationId ?? createId("conv");
   const compactMessages = messages.map(compactMessage);
+  const titleLocked = existing?.titleLocked ?? false;
   const conversation: StoredConversation = {
     id,
-    title: shouldRefreshTitle(existing?.title, compactMessages)
+    title: !titleLocked && shouldRefreshTitle(existing?.title, compactMessages)
       ? titleFromMessages(compactMessages)
       : existing?.title ?? titleFromMessages(compactMessages),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     messageCount: compactMessages.length,
-    messages: compactMessages
+    messages: compactMessages,
+    titleLocked
   };
   const summary: ConversationSummary = {
     id: conversation.id,
@@ -181,4 +186,45 @@ export const deleteConversation = async (user: AuthUser, conversationId: string)
     user,
     (await readIndex(user)).filter((item) => item.id !== conversationId)
   );
+};
+
+export const renameConversation = async (
+  user: AuthUser,
+  conversationId: string,
+  title: string
+): Promise<ConversationSummary> => {
+  const existing = await readConversation(user, conversationId);
+  if (!existing) {
+    throw new HttpError(404, "对话不存在。");
+  }
+
+  const normalizedTitle = title.replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!normalizedTitle) {
+    throw new HttpError(400, "请输入新的对话名称。");
+  }
+
+  const updatedAt = new Date().toISOString();
+  const conversation: StoredConversation = {
+    ...existing,
+    title: normalizedTitle,
+    updatedAt,
+    titleLocked: true
+  };
+  const summary: ConversationSummary = {
+    id: conversation.id,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+    messageCount: conversation.messageCount
+  };
+
+  await writeConversation(user, conversation);
+  await writeIndex(
+    user,
+    [summary, ...(await readIndex(user)).filter((item) => item.id !== conversationId)].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt)
+    )
+  );
+
+  return summary;
 };

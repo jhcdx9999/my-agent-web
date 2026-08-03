@@ -37,6 +37,11 @@ export interface AppState {
   waitingDetail: string;
   editingMessageId?: string;
   editingContent: string;
+  conversationMenuId?: string;
+  renamingConversationId?: string;
+  renamingTitle: string;
+  renamingError: string;
+  renamingSaving: boolean;
 }
 
 export const createInitialState = (): AppState => ({
@@ -63,7 +68,10 @@ export const createInitialState = (): AppState => ({
   statusText: "准备就绪",
   waitingTitle: "",
   waitingDetail: "",
-  editingContent: ""
+  editingContent: "",
+  renamingTitle: "",
+  renamingError: "",
+  renamingSaving: false
 });
 
 export const createUserMessage = (

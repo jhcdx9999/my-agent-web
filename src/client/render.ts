@@ -163,9 +163,10 @@ const renderThemeButton = (theme: ThemeName, activeTheme: ThemeName): string => 
 const renderConversation = (
   conversation: ConversationSummary,
   activeConversationId: string | undefined,
-  pending: boolean
+  pending: boolean,
+  menuConversationId: string | undefined
 ): string => `
-  <div class="conversation-row ${conversation.id === activeConversationId ? "is-active" : ""}">
+  <div class="conversation-row ${conversation.id === activeConversationId ? "is-active" : ""} ${conversation.id === menuConversationId ? "has-open-menu" : ""}">
     <button
       class="conversation-item"
       type="button"
@@ -176,14 +177,52 @@ const renderConversation = (
       <small>${conversation.messageCount} 条 · ${formatTime(conversation.updatedAt)}</small>
     </button>
     <button
-      class="conversation-delete-button"
+      class="conversation-menu-button"
       type="button"
-      data-delete-conversation="${conversation.id}"
-      aria-label="删除 ${escapeHtml(conversation.title)}"
+      data-conversation-menu="${conversation.id}"
+      aria-label="更多操作：${escapeHtml(conversation.title)}"
+      aria-expanded="${conversation.id === menuConversationId ? "true" : "false"}"
       ${pending ? "disabled" : ""}
-    >删除</button>
+    >...</button>
+    ${
+      conversation.id === menuConversationId
+        ? `<div class="conversation-menu" role="menu">
+            <button type="button" data-rename-conversation="${conversation.id}" role="menuitem">重命名</button>
+            <button type="button" data-delete-conversation="${conversation.id}" role="menuitem" class="danger">删除</button>
+          </div>`
+        : ""
+    }
   </div>
 `;
+
+const renderRenameModal = (state: AppState): string => {
+  const conversation = state.conversations.find((item) => item.id === state.renamingConversationId);
+  if (!conversation) {
+    return "";
+  }
+
+  return `
+    <div class="modal-backdrop" role="presentation">
+      <form class="rename-modal" id="renameConversationForm" role="dialog" aria-modal="true" aria-labelledby="renameConversationTitle">
+        <div>
+          <h2 id="renameConversationTitle">重命名对话</h2>
+          <p>为左侧历史窗口设置一个更容易识别的名称。</p>
+        </div>
+        <label>
+          <span>新名称</span>
+          <input name="title" value="${escapeHtml(state.renamingTitle || conversation.title)}" maxlength="80" required autofocus />
+        </label>
+        ${state.renamingError ? `<small class="rename-error">${escapeHtml(state.renamingError)}</small>` : ""}
+        <div class="rename-actions">
+          <button class="modal-secondary-button" type="button" id="cancelRenameConversation">取消</button>
+          <button class="send-button" type="submit" ${state.renamingSaving ? "disabled" : ""}>
+            ${state.renamingSaving ? "保存中" : "保存"}
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+};
 
 const renderLogin = (state: AppState): string => {
   const isDominant = state.authLoginMode === "dominant";
@@ -250,7 +289,14 @@ export const renderApp = (state: AppState): string => {
           ${
             state.conversations.length
               ? state.conversations
-                  .map((conversation) => renderConversation(conversation, state.activeConversationId, state.pending))
+                  .map((conversation) =>
+                    renderConversation(
+                      conversation,
+                      state.activeConversationId,
+                      state.pending,
+                      state.conversationMenuId
+                    )
+                  )
                   .join("")
               : `<div class="conversation-empty">暂无历史</div>`
           }
@@ -366,6 +412,7 @@ export const renderApp = (state: AppState): string => {
           </form>
         </section>
       </section>
+      ${renderRenameModal(state)}
     </main>
   `;
 };

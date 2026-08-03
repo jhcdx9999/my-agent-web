@@ -10,6 +10,7 @@ import {
   getAuthToken,
   login,
   logout,
+  renameConversation as renameConversationRequest,
   register,
   saveOpenAiApiKey,
   sendChat,
@@ -286,6 +287,11 @@ const upsertConversation = (conversation: ConversationSummary): ConversationSumm
 
 const removeConversationFromState = (conversationId: string): ConversationSummary[] =>
   state.conversations.filter((conversation) => conversation.id !== conversationId);
+
+const replaceConversationInState = (conversation: ConversationSummary): ConversationSummary[] =>
+  [conversation, ...state.conversations.filter((item) => item.id !== conversation.id)].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+  );
 
 const handleAuthSuccess = (response: AuthResponse, statusText: string): void => {
   rememberAuth(response);
@@ -586,18 +592,55 @@ function bindEvents(): void {
     button.addEventListener("click", () => {
       const conversationId = button.dataset.conversationId;
       if (conversationId && !state.pending) {
+        updateState({ conversationMenuId: undefined }, { scroll: false });
         void selectConversation(conversationId);
       }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-conversation-menu]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const conversationId = button.dataset.conversationMenu;
+      if (!conversationId || state.pending) {
+        return;
+      }
+
+      updateState(
+        {
+          conversationMenuId: state.conversationMenuId === conversationId ? undefined : conversationId,
+          renamingConversationId: undefined,
+          renamingError: ""
+        },
+        { scroll: false }
+      );
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-rename-conversation]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const conversationId = button.dataset.renameConversation;
+      const conversation = state.conversations.find((item) => item.id === conversationId);
+      if (!conversation || state.pending) {
+        return;
+      }
+
+      updateState(
+        {
+          conversationMenuId: undefined,
+          renamingConversationId: conversation.id,
+          renamingTitle: conversation.title,
+          renamingError: ""
+        },
+        { scroll: false }
+      );
     });
   });
 
   document.querySelectorAll<HTMLButtonElement>("[data-delete-conversation]").forEach((button) => {
     button.addEventListener("click", async () => {
       const conversationId = button.dataset.deleteConversation;
-      if (state.pending) {
-        return;
-      }
-      if (!conversationId || !window.confirm("确定删除这个历史对话吗？")) {
+      if (!conversationId || state.pending) {
         return;
       }
 
@@ -611,6 +654,11 @@ function bindEvents(): void {
             messages: isActive ? [] : state.messages,
             editingMessageId: undefined,
             editingContent: "",
+            conversationMenuId: undefined,
+            renamingConversationId: state.renamingConversationId === conversationId ? undefined : state.renamingConversationId,
+            renamingTitle: state.renamingConversationId === conversationId ? "" : state.renamingTitle,
+            renamingError: "",
+            renamingSaving: false,
             statusText: "历史对话已删除"
           },
           { scroll: false }
@@ -620,6 +668,53 @@ function bindEvents(): void {
         updateState({ statusText: `删除失败：${message}` }, { scroll: false });
       }
     });
+  });
+
+  document.querySelector<HTMLButtonElement>("#cancelRenameConversation")?.addEventListener("click", () => {
+    updateState(
+      {
+        renamingConversationId: undefined,
+        renamingTitle: "",
+        renamingError: "",
+        renamingSaving: false
+      },
+      { scroll: false }
+    );
+  });
+
+  document.querySelector<HTMLFormElement>("#renameConversationForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const conversationId = state.renamingConversationId;
+    const title = String(new FormData(form).get("title") ?? "").trim();
+    if (!conversationId) {
+      return;
+    }
+
+    if (!title) {
+      updateState({ renamingError: "请输入新的对话名称。" }, { scroll: false });
+      return;
+    }
+
+    updateState({ renamingSaving: true, renamingError: "" }, { scroll: false });
+
+    try {
+      const conversation = await renameConversationRequest(conversationId, title);
+      updateState(
+        {
+          renamingSaving: false,
+          conversations: replaceConversationInState(conversation),
+          renamingConversationId: undefined,
+          renamingTitle: "",
+          renamingError: "",
+          statusText: "对话已重命名"
+        },
+        { scroll: false }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      updateState({ renamingSaving: false, renamingError: message }, { scroll: false });
+    }
   });
 
   document.querySelector<HTMLButtonElement>("#newConversationButton")?.addEventListener("click", async () => {
@@ -661,6 +756,11 @@ function bindEvents(): void {
       apiKeyError: "",
       editingMessageId: undefined,
       editingContent: "",
+      conversationMenuId: undefined,
+      renamingConversationId: undefined,
+      renamingTitle: "",
+      renamingError: "",
+      renamingSaving: false,
       authError: ""
     });
   });

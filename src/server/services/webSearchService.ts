@@ -11,7 +11,7 @@ export type WebSearchResult = {
 type SearchProvider = "serper" | "brave" | "tavily" | "duckduckgo";
 
 const freshInfoPattern =
-  /(最新|现在|目前|今天|昨日|昨天|明天|本周|本月|今年|实时|联网|搜索|查询|查一下|新闻|赛程|赛果|比分|排名|积分榜|淘汰赛|世界杯|欧洲杯|欧冠|英超|NBA|股票|汇率|天气|current|latest|today|yesterday|news|score|schedule|standing|price|weather|world cup|2026)/i;
+  /(最新|现在|目前|今天|昨日|昨天|明天|本周|本月|今年|实时|联网|搜索|查询|查一下|新闻|赛程|赛果|比分|排名|积分榜|淘汰赛|世界杯|欧洲杯|欧冠|英超|NBA|股票|汇率|天气|价格|行情|币价|加密货币|现货|期货|最高价|最低价|波动率|current|latest|today|yesterday|news|score|schedule|standing|price|weather|world cup|2026|BTC|ETH|bitcoin|crypto|binance|volatility|ohlc|kline)/i;
 
 const authoritativeDomains = new Map<string, number>([
   ["fifa.com", 140],

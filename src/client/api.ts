@@ -10,17 +10,29 @@ import type {
 } from "../shared/types";
 
 const parseJson = async <T>(response: Response): Promise<T> => {
-  let data: T & { error?: string };
+  const text = await response.text();
+  let data: (T & { error?: string }) | undefined;
 
-  try {
-    data = (await response.json()) as T & { error?: string };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`响应读取失败：${message}。如果服务器刚更新，请刷新页面后重试。`);
+  if (text.trim()) {
+    try {
+      data = JSON.parse(text) as T & { error?: string };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const preview = text.trim().slice(0, 240);
+      throw new Error(
+        `响应不是有效 JSON：${message}。HTTP ${response.status} ${response.statusText || ""}${
+          preview ? `，响应片段：${preview}` : ""
+        }`
+      );
+    }
   }
 
   if (!response.ok) {
-    throw new Error(data.error ?? `Request failed with ${response.status}.`);
+    throw new Error(data?.error ?? `请求失败：HTTP ${response.status} ${response.statusText || "上游无响应"}`);
+  }
+
+  if (!data) {
+    throw new Error(`响应为空：HTTP ${response.status} ${response.statusText || ""}`);
   }
 
   return data;
@@ -133,6 +145,18 @@ export const deleteConversation = async (conversationId: string): Promise<void> 
     })
   );
 };
+
+export const renameConversation = async (conversationId: string, title: string): Promise<ConversationSummary> =>
+  parseJson<ConversationSummary>(
+    await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders()
+      },
+      body: JSON.stringify({ title })
+    })
+  );
 
 export const sendChat = async (payload: ChatRequest): Promise<ChatResponse> =>
   parseJson<ChatResponse>(

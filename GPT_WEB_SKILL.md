@@ -221,6 +221,25 @@ Use compact storage:
 
 All history access must require auth and resolve user directory by UID.
 
+## Complex Data Questions
+
+Default behavior for complex data questions:
+
+- First answer with web research and source-grounded reasoning.
+- Do not auto-run local code just because the user mentions statistics, highest/lowest price, volatility, CSV, table, or analysis.
+- Enter local code/data mode only when the user explicitly asks for code execution, API retrieval, exact calculation, saved code, or a precise value after being dissatisfied with a research answer.
+- Keep the intent detector narrow. Good triggers include `用代码`, `运行代码`, `精确计算`, `精确值`, `调用接口`, `拉取数据`, `fetch data`, `run code`, `execute code`, and API phrases tied to retrieval/calculation. Avoid broad triggers such as bare `api`, `统计`, or `计算`.
+- If local code mode runs, allow HTTPS-only `fetch` in the sandbox for public APIs, keep blocked tokens such as `import`, `require`, `process`, `fs`, `child_process`, `eval`, and `Function`, and wrap generated code in an async function so `await fetch(...)` works.
+- Save generated code and output under:
+
+```text
+storage/users/<uid>/code-runs/<conversationId>/
+```
+
+Do not delete generated code after answering. Include the saved path in the assistant response and in the downloadable data-result attachment.
+
+Frontend API parsing should read response text first, then parse JSON when present. This prevents empty 503/502 responses from surfacing as misleading `Unexpected end of JSON input` errors.
+
 ## Uploads And Mobile UI
 
 Upload support should cover:

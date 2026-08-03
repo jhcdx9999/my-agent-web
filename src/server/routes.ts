@@ -1,6 +1,7 @@
 import express from "express";
 import { appConfig } from "./config";
 import { HttpError, getErrorMessage } from "./errors";
+import { createId } from "./utils/id";
 import { processChat } from "./services/chatService";
 import { getGeneratedFilePath } from "./services/fileStore";
 import { saveUserOpenAiApiKey, userHasOpenAiApiKey } from "./services/userConfigService";
@@ -16,6 +17,7 @@ import {
   deleteConversation,
   getConversation,
   listConversations,
+  renameConversation,
   saveConversation
 } from "./services/historyService";
 import type { AuthUser, ChatRequest } from "../shared/types";
@@ -172,6 +174,24 @@ export const createRouter = (): express.Router => {
     }
   );
 
+  router.patch(
+    "/conversations/:conversationId",
+    requireAuth,
+    async (request: AuthedRequest, response, next) => {
+      try {
+        response.json(
+          await renameConversation(
+            request.user!,
+            request.params.conversationId,
+            String(request.body?.title ?? "")
+          )
+        );
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   router.post("/chat", async (request, response, next) => {
     try {
       const user = await authenticateToken(tokenFromRequest(request));
@@ -180,15 +200,16 @@ export const createRouter = (): express.Router => {
         throw new HttpError(400, "messages is required.");
       }
 
+      const conversationId = body.conversationId || createId("conv");
       const chatResponse = await processChat({
           messages: body.messages,
           model: body.model ?? (appConfig.ai.textRuntime === "codex"
             ? appConfig.codex.defaultModel
             : appConfig.openai.defaultModel),
-          conversationId: body.conversationId,
+          conversationId,
           paused: body.paused
       }, user);
-      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
+      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], conversationId);
 
       sendJson(response, {
         ...chatResponse,

@@ -4,6 +4,7 @@ import { createTextCompletion, generateImage } from "./openaiClient";
 import { createCodexCompletion } from "./codexAppServerClient";
 import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
+import { saveCodeRun } from "./codeRunStore";
 import { writeGeneratedFile } from "./fileStore";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
 import { getUserOpenAiApiKey } from "./userConfigService";
@@ -146,16 +147,17 @@ ${userPrompt}
 `.trim();
 
 const buildDataPlanPrompt = (userPrompt: string): string => `
-你需要为一个本地 JavaScript 数据整理沙箱生成代码。
+Generate JavaScript for a local data-analysis sandbox.
+Rules:
+- Output JavaScript only. Do not wrap it in Markdown fences.
+- Do not use import, require, process, fs, child_process, eval, Function, while, or infinite loops.
+- You may use Array, Object, Map, Set, Math, JSON, Date, Number, String, Boolean, and fetch.
+- fetch may only call HTTPS URLs. For market prices, klines, public statistics, or other public data, prefer authoritative public APIs and print the source URL.
+- Use console.log to print the final computed answer and key assumptions.
+- If the user did not explicitly ask for precise calculation, API retrieval, code execution, or saved code, print:
+  console.log("This request should be answered with web research first. Run local code only after the user explicitly asks for precise calculation, API retrieval, or saved code.");
 
-限制：
-- 只输出 JavaScript 代码。
-- 不要使用 import、require、process、fs、child_process、eval、Function、while 或无限循环。
-- 可以使用 Array/Object/Map/Set/Math/JSON/Date。
-- 用 console.log 输出整理、统计或计算结果。
-- 如果用户没有给出明确数据，请输出 console.log("需要用户提供可统计的数据。");
-
-用户任务：
+User task:
 ${userPrompt}
 `.trim();
 
@@ -376,9 +378,10 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     const code = stripMarkdownFence(codeCompletion.content);
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
+    const codeRun = await saveCodeRun(user, request.conversationId, code, output);
     const attachment = await writeGeneratedFile(
       `${Date.now()}-data-result.txt`,
-      `Generated code:\n${code}\n\nOutput:\n${output}\n`,
+      `Generated code:\n${code}\n\nOutput:\n${output}\n\nSaved code:\n${codeRun.codePath}\nSaved output:\n${codeRun.outputPath}\n`,
       "text/plain; charset=utf-8"
     );
 
@@ -389,7 +392,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
         completionTokens: codeCompletion.usage?.completion_tokens,
         totalTokens: codeCompletion.usage?.total_tokens
       },
-      message: createAssistantMessage(`本地数据任务已完成：\n\n${output}`, [
+      message: createAssistantMessage(`本地数据任务已完成：\n\n${output}\n\n代码已保存：${codeRun.codePath}`, [
         {
           ...attachment,
           kind: "data"
