@@ -61,7 +61,8 @@ export const createRouter = (): express.Router => {
       defaultModel,
       models,
       textRuntime,
-      requiresOpenAiApiKeyForText: textRuntime !== "codex",
+      requiresOpenAiApiKeyForText:
+        textRuntime !== "codex" || appConfig.codex.authMode === "user-api-key",
       themes: ["white", "sapphire", "black"],
       auth: {
         mode: appConfig.auth.mode

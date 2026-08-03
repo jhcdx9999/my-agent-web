@@ -1,6 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
+import path from "node:path";
 import { appConfig } from "../config";
 import { HttpError } from "../errors";
+import { ensureDirectory } from "../utils/fs";
 
 type JsonRpcId = number | string;
 
@@ -103,6 +106,11 @@ class CodexAppServerClient {
   private activeTurn: ActiveTurn | null = null;
   private lastUsage: CodexCompletion["usage"];
 
+  constructor(
+    private readonly userId: string,
+    private readonly apiKey: string
+  ) {}
+
   async complete(messages: ChatApiMessage[], model: string): Promise<CodexCompletion> {
     try {
       await this.ensureStarted();
@@ -110,7 +118,7 @@ class CodexAppServerClient {
       const message = error instanceof Error ? error.message : String(error);
       throw new HttpError(
         502,
-        `Codex app-server 启动失败：${message}。请确认服务器已安装并登录 Codex CLI，且 codex app-server --help 可以正常运行。`
+        `Codex app-server 启动失败：${message}。请确认服务器已安装 Codex CLI，codex app-server --help 可以正常运行，并且当前用户已配置可用的 OpenAI API key。`
       );
     }
 
@@ -224,9 +232,16 @@ class CodexAppServerClient {
   }
 
   private async start(): Promise<void> {
+    const codexHome = path.join(appConfig.usersDir, this.userId, "codex-home");
+    await ensureDirectory(codexHome);
+
     this.child = spawn(appConfig.codex.command, ["app-server", "--listen", "stdio://"], {
       cwd: appConfig.codex.workingDirectory,
-      env: process.env,
+      env: {
+        ...process.env,
+        ...(appConfig.codex.authMode === "user-api-key" ? { OPENAI_API_KEY: this.apiKey } : {}),
+        CODEX_HOME: codexHome
+      },
       stdio: ["pipe", "pipe", "pipe"]
     });
 
@@ -476,9 +491,32 @@ class CodexAppServerClient {
   }
 }
 
-const client = new CodexAppServerClient();
+const clients = new Map<string, CodexAppServerClient>();
+
+const keyFingerprint = (apiKey: string): string =>
+  apiKey ? crypto.createHash("sha256").update(apiKey).digest("hex").slice(0, 16) : "server-login";
+
+const clientFor = (userId: string, apiKey: string): CodexAppServerClient => {
+  const key = `${userId}:${keyFingerprint(apiKey)}`;
+  const existing = clients.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const client = new CodexAppServerClient(userId, apiKey);
+  clients.set(key, client);
+  return client;
+};
 
 export const createCodexCompletion = (
   messages: ChatApiMessage[],
-  model: string
-): Promise<CodexCompletion> => client.complete(messages, model);
+  model: string,
+  options: { apiKey: string; userId: string }
+): Promise<CodexCompletion> => {
+  const apiKey = options.apiKey.trim();
+  if (appConfig.codex.authMode === "user-api-key" && !apiKey) {
+    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用该用户自己的 key。");
+  }
+
+  return clientFor(options.userId, apiKey).complete(messages, model);
+};

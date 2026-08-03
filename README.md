@@ -43,6 +43,7 @@ OPENAI_MODELS=gpt-5.5,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
 OPENAI_REASONING_EFFORT=xhigh
 
 CODEX_COMMAND=codex
+CODEX_AUTH_MODE=user-api-key
 CODEX_DEFAULT_MODEL=gpt-5.5
 CODEX_MODELS=gpt-5.5,gpt-5-codex,gpt-5.1,gpt-5
 CODEX_REASONING_EFFORT=xhigh
@@ -74,7 +75,11 @@ TAVILY_API_KEY=
 
 OpenAI API key 不再配置在 `.env` 中，而是按用户保存在根目录 `a.json`。如果 `a.json` 中没有某个用户的 `openaiApiKey`，该用户登录后页面会要求输入；用户可重复输入并覆盖旧 key。
 
-`AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，并使用 Codex CLI 自己的登录态/配置；网页模型下拉会显示 `CODEX_MODELS`。生成图片、上传图片/PDF/文件仍走 OpenAI Responses/Image API，因此这些能力仍需要用户配置 OpenAI API key。
+`AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，网页模型下拉会显示 `CODEX_MODELS`。
+
+默认 `CODEX_AUTH_MODE=user-api-key`：每个网页登录用户都必须在页面配置自己的 OpenAI API key；后端会为不同用户启动独立 Codex app-server 子进程，并把该用户的 key 注入为 `OPENAI_API_KEY`，同时使用独立 `storage/users/<user>/codex-home`，避免多用户共享服务器统一登录态。生成图片、上传图片/PDF/文件也会继续使用该用户自己的 OpenAI API key。
+
+如果你确实想让所有用户共用服务器上的 `codex login` 状态，可以改成 `CODEX_AUTH_MODE=server-login`。这种模式运维简单，但不适合按用户分账或隔离。
 
 使用 Codex 文本运行时前，先在服务器确认：
 
@@ -83,11 +88,12 @@ codex --version
 codex app-server --help
 ```
 
-如果这两个命令不能运行，请先安装并登录 Codex CLI，再把 `.env` 中设置为：
+如果这两个命令不能运行，请先安装 Codex CLI。默认用户 API key 模式不需要在服务器执行 `codex login`，但每个网页用户需要在页面保存自己的 OpenAI API key。然后把 `.env` 中设置为：
 
 ```ini
 AI_TEXT_RUNTIME=codex
 CODEX_COMMAND=codex
+CODEX_AUTH_MODE=user-api-key
 CODEX_DEFAULT_MODEL=gpt-5.5
 CODEX_REASONING_EFFORT=xhigh
 CODEX_SANDBOX=read-only

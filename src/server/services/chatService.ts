@@ -178,15 +178,23 @@ const isHostedWebSearchFailure = (error: unknown): boolean => {
 const createTextCompletionWithSearchFallback = async (
   messages: ChatMessage[],
   model: string,
-  options: { apiKey?: string; shouldSearch: boolean }
+  options: { apiKey?: string; shouldSearch: boolean; user: AuthUser }
 ) => {
   if (shouldUseCodexTextRuntime(messages)) {
+    if (!options.apiKey) {
+      throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用你的 key。");
+    }
+
     return createCodexCompletion(
       toApiMessages(await messagesWithWebSearchContext(messages)).map((message) => ({
         role: message.role,
         content: message.content
       })),
-      model
+      model,
+      {
+        apiKey: options.apiKey,
+        userId: options.user.id
+      }
     );
   }
 
@@ -263,7 +271,10 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   );
   const textModel = appConfig.ai.textRuntime === "codex" && !hasUploadedAttachments ? codexModel : openAiModel;
   const requiresOpenAiApiKey =
-    intent === "image" || hasUploadedAttachments || appConfig.ai.textRuntime !== "codex";
+    intent === "image" ||
+    hasUploadedAttachments ||
+    appConfig.ai.textRuntime !== "codex" ||
+    appConfig.codex.authMode === "user-api-key";
 
   if (requiresOpenAiApiKey && !apiKey) {
     throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
@@ -302,7 +313,8 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     }];
     const completion = await createTextCompletionWithSearchFallback(fileMessages, textModel, {
       apiKey,
-      shouldSearch
+      shouldSearch,
+      user
     });
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-document.md`,
@@ -331,7 +343,8 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     }];
     const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, textModel, {
       apiKey,
-      shouldSearch
+      shouldSearch,
+      user
     });
     const code = stripMarkdownFence(codeCompletion.content);
     const result = await runLocalDataCode(code);
@@ -361,7 +374,8 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   const shouldSearch = needsWebSearch(latestPrompt);
   const completion = await createTextCompletionWithSearchFallback(normalizedMessages, textModel, {
     apiKey,
-    shouldSearch
+    shouldSearch,
+    user
   });
 
   return {

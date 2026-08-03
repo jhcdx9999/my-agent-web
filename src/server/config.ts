@@ -28,6 +28,7 @@ const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.5";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
+const codexAuthMode = process.env.CODEX_AUTH_MODE === "server-login" ? "server-login" : "user-api-key";
 const reasoningEffort = ["minimal", "low", "medium", "high", "xhigh"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
   ? process.env.OPENAI_REASONING_EFFORT!
   : "xhigh";
@@ -93,7 +94,8 @@ export const appConfig = {
     timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 180000),
     workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),
     sandbox: process.env.CODEX_SANDBOX === "workspace-write" ? "workspace-write" : "read-only",
-    approvalPolicy: process.env.CODEX_APPROVAL_POLICY ?? "on-request"
+    approvalPolicy: process.env.CODEX_APPROVAL_POLICY ?? "on-request",
+    authMode: codexAuthMode
   },
   search: {
     enabled: boolFromEnv(process.env.ENABLE_WEB_SEARCH, true),
