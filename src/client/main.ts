@@ -27,8 +27,8 @@ if (!root) {
   throw new Error("App root was not found.");
 }
 
-const readAuthMode = (): AppState["authMode"] =>
-  location.hash === "#/register" ? "register" : "login";
+const readAuthMode = (loginMode: AppState["authLoginMode"] = "free"): AppState["authMode"] =>
+  loginMode === "dominant" ? "login" : location.hash === "#/register" ? "register" : "login";
 
 let state: AppState = {
   ...createInitialState(),
@@ -281,11 +281,12 @@ const bindAuthEvents = (): void => {
     updateState({ pending: true, authError: "" });
 
     try {
+      const shouldRegister = state.authLoginMode === "free" && state.authMode === "register";
       const response =
-        state.authMode === "register"
+        shouldRegister
           ? await register({ username, password })
           : await login({ username, password });
-      handleAuthSuccess(response, state.authMode === "register" ? "注册成功" : "登录成功");
+      handleAuthSuccess(response, shouldRegister ? "注册成功" : "登录成功");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       updateState({ pending: false, authError: message });
@@ -293,6 +294,10 @@ const bindAuthEvents = (): void => {
   });
 
   document.querySelector<HTMLButtonElement>("#switchAuthMode")?.addEventListener("click", () => {
+    if (state.authLoginMode === "dominant") {
+      return;
+    }
+
     const authMode = state.authMode === "login" ? "register" : "login";
     history.replaceState(null, "", `${location.pathname}${location.search}#/${authMode}`);
     updateState({
@@ -458,6 +463,8 @@ const loadConfig = async (): Promise<void> => {
   try {
     const config = await fetchAppConfig();
     updateState({
+      authLoginMode: config.auth.mode,
+      authMode: readAuthMode(config.auth.mode),
       availableModels: config.models,
       selectedModel: config.defaultModel || config.models[0] || "",
       uploadAccept: config.upload.accept,
@@ -482,7 +489,7 @@ void restoreSession();
 window.addEventListener("hashchange", () => {
   if (!state.user) {
     updateState({
-      authMode: readAuthMode(),
+      authMode: readAuthMode(state.authLoginMode),
       authError: ""
     });
   }

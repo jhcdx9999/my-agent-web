@@ -1,5 +1,6 @@
 import "dotenv/config";
 import path from "node:path";
+import type { AuthLoginMode } from "../shared/types";
 
 const boolFromEnv = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined || value.trim() === "") {
@@ -24,6 +25,8 @@ const csvFromEnv = (value: string | undefined, fallback: string[]): string[] => 
 };
 
 const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.6-sol";
+const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
+const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
   "gpt-5.6-sol",
   "gpt-5.6-terra",
@@ -39,10 +42,14 @@ export const appConfig = {
   storageDir: path.resolve(process.cwd(), "storage", "generated"),
   authDir: path.resolve(process.cwd(), "storage", "auth"),
   usersDir: path.resolve(process.cwd(), "storage", "users"),
+  dominantUsersFile: path.resolve(process.cwd(), process.env.DOMINANT_USERS_FILE ?? "a.json"),
   tokenTtlMs: intFromEnv(process.env.AUTH_TOKEN_TTL_HOURS, 120) * 60 * 60 * 1000,
+  auth: {
+    mode: authMode
+  },
   openai: {
     apiKey: process.env.OPENAI_API_KEY ?? "",
-    baseUrl: (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, ""),
+    baseUrl: openaiBaseUrl,
     textApi: process.env.OPENAI_TEXT_API === "chat" ? "chat" : "responses",
     defaultModel,
     models: configuredModels.includes(defaultModel)
@@ -55,6 +62,23 @@ export const appConfig = {
     imageSize: process.env.OPENAI_IMAGE_SIZE ?? "1024x1024",
     imageQuality: process.env.OPENAI_IMAGE_QUALITY ?? "auto",
     imageFormat: process.env.OPENAI_IMAGE_FORMAT ?? "png"
+  },
+  search: {
+    enabled: boolFromEnv(process.env.ENABLE_WEB_SEARCH, true),
+    provider: process.env.WEB_SEARCH_PROVIDER ?? "auto",
+    maxResults: intFromEnv(process.env.WEB_SEARCH_MAX_RESULTS, 5),
+    timeoutMs: intFromEnv(process.env.WEB_SEARCH_TIMEOUT_MS, 10000),
+    fetchPages: boolFromEnv(process.env.WEB_SEARCH_FETCH_PAGES, true),
+    maxFetchPages: intFromEnv(process.env.WEB_SEARCH_MAX_FETCH_PAGES, 2),
+    maxPageChars: intFromEnv(process.env.WEB_SEARCH_MAX_PAGE_CHARS, 2500),
+    userAgent: process.env.WEB_SEARCH_USER_AGENT ?? "CustomGPTWeb/0.1",
+    serperApiKey: process.env.SERPER_API_KEY ?? "",
+    braveApiKey: process.env.BRAVE_SEARCH_API_KEY ?? "",
+    tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
+    openaiHostedTool: boolFromEnv(
+      process.env.OPENAI_WEB_SEARCH_TOOL,
+      openaiBaseUrl.includes("api.openai.com")
+    )
   },
   safety: {
     enableLocalCodeExecution: boolFromEnv(process.env.ENABLE_LOCAL_CODE_EXECUTION, true),

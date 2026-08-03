@@ -4,6 +4,7 @@ import { createTextCompletion, generateImage } from "./openaiClient";
 import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
 import { writeGeneratedFile } from "./fileStore";
+import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
 import { HttpError } from "../errors";
 import type { ChatAttachment, ChatMessage, ChatRequest, ChatResponse } from "../../shared/types";
 
@@ -139,6 +140,33 @@ const stripMarkdownFence = (value: string): string =>
     .replace(/```\s*$/i, "")
     .trim();
 
+const withWebSearchContext = async (prompt: string): Promise<string> => {
+  if (!shouldUseWebSearch(prompt)) {
+    return prompt;
+  }
+
+  const results = await searchWeb(prompt);
+  return `${formatSearchContext(prompt, results)}\n\n用户原始问题：\n${prompt}`;
+};
+
+const needsWebSearch = (prompt: string): boolean => shouldUseWebSearch(prompt);
+
+const messagesWithWebSearchContext = async (messages: ChatMessage[]): Promise<ChatMessage[]> => {
+  const latest = messages[messages.length - 1];
+  if (!latest || latest.role !== "user" || !shouldUseWebSearch(latest.content)) {
+    return messages;
+  }
+
+  const content = await withWebSearchContext(latest.content);
+  return [
+    ...messages.slice(0, -1),
+    {
+      ...latest,
+      content
+    }
+  ];
+};
+
 export const processChat = async (request: ChatRequest): Promise<ChatResponse> => {
   const normalizedMessages = normalizeUploads(request.messages);
 
@@ -182,12 +210,14 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
   }
 
   if (intent === "file") {
+    const shouldSearch = needsWebSearch(latestPrompt);
+    const latestPromptWithSearch = shouldSearch ? await withWebSearchContext(latestPrompt) : latestPrompt;
     const completion = await createTextCompletion(toApiMessages([{
       id: createId("msg"),
       role: "user",
-      content: buildFilePrompt(latestPrompt),
+      content: buildFilePrompt(latestPromptWithSearch),
       createdAt: new Date().toISOString()
-    }]), model);
+    }]), model, { webSearch: shouldSearch });
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-document.md`,
       completion.content,
@@ -206,12 +236,14 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
   }
 
   if (intent === "data") {
+    const shouldSearch = needsWebSearch(latestPrompt);
+    const latestPromptWithSearch = shouldSearch ? await withWebSearchContext(latestPrompt) : latestPrompt;
     const codeCompletion = await createTextCompletion(toApiMessages([{
       id: createId("msg"),
       role: "user",
-      content: buildDataPlanPrompt(latestPrompt),
+      content: buildDataPlanPrompt(latestPromptWithSearch),
       createdAt: new Date().toISOString()
-    }]), model);
+    }]), model, { webSearch: shouldSearch });
     const code = stripMarkdownFence(codeCompletion.content);
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
@@ -237,7 +269,12 @@ export const processChat = async (request: ChatRequest): Promise<ChatResponse> =
     };
   }
 
-  const completion = await createTextCompletion(toApiMessages(normalizedMessages), model);
+  const shouldSearch = needsWebSearch(latestPrompt);
+  const completion = await createTextCompletion(
+    toApiMessages(shouldSearch ? await messagesWithWebSearchContext(normalizedMessages) : normalizedMessages),
+    model,
+    { webSearch: shouldSearch }
+  );
 
   return {
     intent,

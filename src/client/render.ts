@@ -116,26 +116,36 @@ const renderConversation = (
 `;
 
 const renderLogin = (state: AppState): string => {
-  const isRegister = state.authMode === "register";
+  const isDominant = state.authLoginMode === "dominant";
+  const isRegister = !isDominant && state.authMode === "register";
+  const description = isDominant
+    ? "请输入管理员分配的账号密码进入。"
+    : isRegister
+      ? "创建一个本地账号，之后历史对话会归入这个账号。"
+      : "输入已注册账号密码进入你的个人对话空间。";
 
   return `
     <main class="login-shell">
       <form class="login-panel" id="authForm">
         <h1>${isRegister ? "注册账号" : "登录账号"}</h1>
-        <p>${isRegister ? "创建一个本地账号，之后历史对话会归入这个账号。" : "输入已注册账号密码进入你的个人对话空间。"}</p>
+        <p>${description}</p>
         <label>
           <span>账号</span>
-          <input id="usernameInput" name="username" autocomplete="username" required minlength="3" />
+          <input id="usernameInput" name="username" autocomplete="username" required minlength="${isDominant ? "1" : "3"}" />
         </label>
         <label>
           <span>密码</span>
-          <input id="passwordInput" name="password" type="password" autocomplete="${isRegister ? "new-password" : "current-password"}" required minlength="6" />
+          <input id="passwordInput" name="password" type="password" autocomplete="${isRegister ? "new-password" : "current-password"}" required minlength="${isDominant ? "1" : "6"}" />
         </label>
         ${state.authError ? `<div class="login-error">${escapeHtml(state.authError)}</div>` : ""}
         <button class="send-button" type="submit" ${state.pending ? "disabled" : ""}>${isRegister ? "注册并进入" : "登录"}</button>
-        <button class="auth-link-button" type="button" id="switchAuthMode">
-          ${isRegister ? "已有账号？去登录" : "没有账号？去注册"}
-        </button>
+        ${
+          isDominant
+            ? ""
+            : `<button class="auth-link-button" type="button" id="switchAuthMode">
+                ${isRegister ? "已有账号？去登录" : "没有账号？去注册"}
+              </button>`
+        }
       </form>
     </main>
   `;

@@ -6,6 +6,8 @@ export type AttachmentKind = "image" | "pdf" | "file" | "data";
 
 export type ThemeName = "white" | "sapphire" | "black";
 
+export type AuthLoginMode = "free" | "dominant";
+
 export interface ChatAttachment {
   id: string;
   kind: AttachmentKind;
@@ -52,6 +54,9 @@ export interface AppConfigResponse {
   defaultModel: string;
   models: string[];
   themes: ThemeName[];
+  auth: {
+    mode: AuthLoginMode;
+  };
   upload: {
     maxFiles: number;
     maxBytesPerFile: number;

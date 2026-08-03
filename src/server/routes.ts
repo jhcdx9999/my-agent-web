@@ -48,6 +48,9 @@ export const createRouter = (): express.Router => {
       defaultModel: appConfig.openai.defaultModel,
       models: appConfig.openai.models,
       themes: ["white", "sapphire", "black"],
+      auth: {
+        mode: appConfig.auth.mode
+      },
       upload: appConfig.upload
     });
   });

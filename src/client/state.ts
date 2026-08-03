@@ -3,6 +3,7 @@ import type {
   ChatAttachment,
   ChatMessage,
   ConversationSummary,
+  AuthLoginMode,
   ThemeName
 } from "../shared/types";
 import { createClientId } from "./id";
@@ -11,6 +12,7 @@ export interface AppState {
   user?: AuthUser;
   authToken: string;
   authMode: "login" | "register";
+  authLoginMode: AuthLoginMode;
   authError: string;
   authExpiresAt?: string;
   messages: ChatMessage[];
@@ -31,6 +33,7 @@ export interface AppState {
 export const createInitialState = (): AppState => ({
   authToken: "",
   authMode: "login",
+  authLoginMode: "free",
   authError: "",
   messages: [],
   conversations: [],

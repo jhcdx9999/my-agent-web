@@ -64,6 +64,10 @@ type ResponsesInputContent =
       file_url?: string;
     };
 
+type ResponsesTool = {
+  type: "web_search_preview";
+};
+
 type ImageResponse = {
   data?: Array<{
     b64_json?: string;
@@ -260,7 +264,8 @@ const createChatCompletion = async (
 
 const createResponsesCompletion = async (
   messages: ChatApiMessage[],
-  model: string
+  model: string,
+  options: { webSearch?: boolean } = {}
 ): Promise<{ content: string; usage?: ChatCompletionResponse["usage"] }> => {
   const system = messages.find((message) => message.role === "system")?.content;
   const hasAttachments = messages.some((message) => message.attachments?.length);
@@ -304,6 +309,9 @@ const createResponsesCompletion = async (
       model,
       instructions: system,
       input,
+      ...(options.webSearch && appConfig.search.openaiHostedTool
+        ? { tools: [{ type: "web_search_preview" } satisfies ResponsesTool] }
+        : {}),
       ...(hasAttachments ? { truncation: "auto" } : {})
     })
   });
@@ -330,13 +338,14 @@ const createResponsesCompletion = async (
 
 export const createTextCompletion = async (
   messages: ChatApiMessage[],
-  model: string
+  model: string,
+  options: { webSearch?: boolean } = {}
 ): Promise<{ content: string; usage?: ChatCompletionResponse["usage"] }> => {
   if (appConfig.openai.textApi === "chat") {
     return createChatCompletion(messages, model);
   }
 
-  return createResponsesCompletion(messages, model);
+  return createResponsesCompletion(messages, model, options);
 };
 
 export const generateImage = async (

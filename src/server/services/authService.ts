@@ -18,7 +18,15 @@ type StoredUser = {
 type SessionRecord = {
   tokenHash: string;
   user: AuthUser;
+  authMode?: "free" | "dominant";
   expiresAt: string;
+};
+
+type DominantUserEntry = {
+  id?: string;
+  username?: string;
+  account?: string;
+  password?: string;
 };
 
 const usersFile = path.join(appConfig.authDir, "users.json");
@@ -29,16 +37,43 @@ const normalizeUsername = (username: string): string => username.trim().toLowerC
 const hashToken = (token: string): string =>
   crypto.createHash("sha256").update(token).digest("hex");
 
-const validateAuthRequest = (request: AuthRequest): { username: string; password: string } => {
+const stableDominantUserId = (username: string): string => {
+  const digest = crypto.createHash("sha256").update(`dominant:${username}`).digest("hex").slice(0, 16);
+  return `dominant_${digest}`;
+};
+
+const plainPasswordMatches = (input: string, expected: string): boolean => {
+  const inputBuffer = Buffer.from(input);
+  const expectedBuffer = Buffer.from(expected);
+
+  return inputBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(inputBuffer, expectedBuffer);
+};
+
+const validateAuthRequest = (
+  request: AuthRequest,
+  options: { enforceFreeRules?: boolean } = { enforceFreeRules: true }
+): { username: string; password: string } => {
   const username = normalizeUsername(request.username);
   const password = request.password ?? "";
 
-  if (!/^[a-z0-9_-]{3,32}$/.test(username)) {
-    throw new HttpError(400, "账号只能包含 3-32 位小写字母、数字、下划线或短横线。");
+  if (options.enforceFreeRules) {
+    if (!/^[a-z0-9_-]{3,32}$/.test(username)) {
+      throw new HttpError(400, "账号只能包含 3-32 位小写字母、数字、下划线或短横线。");
+    }
+
+    if (password.length < 6) {
+      throw new HttpError(400, "密码至少需要 6 位。");
+    }
+
+    return { username, password };
   }
 
-  if (password.length < 6) {
-    throw new HttpError(400, "密码至少需要 6 位。");
+  if (!username || username.length > 128) {
+    throw new HttpError(400, "请输入有效账号。");
+  }
+
+  if (!password) {
+    throw new HttpError(400, "请输入密码。");
   }
 
   return { username, password };
@@ -61,10 +96,49 @@ const readJsonFile = async <T>(filePath: string, fallback: T): Promise<T> => {
 
   try {
     const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw.replace(/^\uFEFF/, "")) as T;
+    const cleaned = raw.replace(/^\uFEFF/, "").trim();
+    return cleaned ? (JSON.parse(cleaned) as T) : fallback;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return fallback;
+    }
+
+    throw error;
+  }
+};
+
+const readDominantUsers = async (): Promise<StoredUser[]> => {
+  try {
+    const raw = await fs.readFile(appConfig.dominantUsersFile, "utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, "")) as
+      | DominantUserEntry[]
+      | { users?: DominantUserEntry[]; accounts?: DominantUserEntry[] };
+    const entries = Array.isArray(parsed) ? parsed : parsed.users ?? parsed.accounts ?? [];
+
+    return entries
+      .map((entry) => {
+        const username = normalizeUsername(entry.username ?? entry.account ?? "");
+        const password = entry.password ?? "";
+
+        if (!username || !password) {
+          return undefined;
+        }
+
+        return {
+          id: entry.id?.trim() || stableDominantUserId(username),
+          username,
+          passwordHash: password,
+          salt: "",
+          createdAt: new Date(0).toISOString()
+        } satisfies StoredUser;
+      })
+      .filter((user): user is StoredUser => Boolean(user));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new HttpError(
+        500,
+        `dominant 登录模式已启用，但根目录缺少 ${path.basename(appConfig.dominantUsersFile)}。`
+      );
     }
 
     throw error;
@@ -97,6 +171,7 @@ const issueToken = async (user: AuthUser): Promise<AuthResponse> => {
   sessions.push({
     tokenHash: hashToken(token),
     user,
+    authMode: appConfig.auth.mode,
     expiresAt
   });
   await writeSessions(sessions);
@@ -108,7 +183,37 @@ const issueToken = async (user: AuthUser): Promise<AuthResponse> => {
   };
 };
 
+const resolveAuthorizedSessionUser = async (session: SessionRecord): Promise<AuthUser> => {
+  if (session.authMode && session.authMode !== appConfig.auth.mode) {
+    throw new HttpError(401, "登录模式已变更，请重新登录。");
+  }
+
+  if (appConfig.auth.mode !== "dominant") {
+    return session.user;
+  }
+
+  if (session.authMode !== "dominant") {
+    throw new HttpError(401, "登录模式已变更，请重新登录。");
+  }
+
+  const dominantUsers = await readDominantUsers();
+  const matchedUser = dominantUsers.find((item) => item.username === session.user.username);
+
+  if (!matchedUser) {
+    throw new HttpError(401, "账号授权已变更，请重新登录。");
+  }
+
+  return {
+    id: matchedUser.id,
+    username: matchedUser.username
+  };
+};
+
 export const registerUser = async (request: AuthRequest): Promise<AuthResponse> => {
+  if (appConfig.auth.mode === "dominant") {
+    throw new HttpError(403, "当前为 dominant 登录模式，不允许用户自行注册。");
+  }
+
   const { username, password } = validateAuthRequest(request);
   const users = await readUsers();
 
@@ -134,16 +239,25 @@ export const registerUser = async (request: AuthRequest): Promise<AuthResponse> 
 };
 
 export const loginUser = async (request: AuthRequest): Promise<AuthResponse> => {
-  const { username, password } = validateAuthRequest(request);
-  const users = await readUsers();
+  const { username, password } = validateAuthRequest(request, {
+    enforceFreeRules: appConfig.auth.mode !== "dominant"
+  });
+  const users = appConfig.auth.mode === "dominant" ? await readDominantUsers() : await readUsers();
   const existing = users.find((user) => user.username === username);
 
   if (!existing) {
-    throw new HttpError(404, "账号未注册，请先注册。");
+    throw new HttpError(
+      404,
+      appConfig.auth.mode === "dominant" ? "账号不在授权名单中，请联系管理员。" : "账号未注册，请先注册。"
+    );
   }
 
-  const passwordHash = await scrypt(password, existing.salt);
-  if (passwordHash !== existing.passwordHash) {
+  const passwordMatches =
+    appConfig.auth.mode === "dominant"
+      ? plainPasswordMatches(password, existing.passwordHash)
+      : (await scrypt(password, existing.salt)) === existing.passwordHash;
+
+  if (!passwordMatches) {
     throw new HttpError(401, "密码不正确。");
   }
 
@@ -165,7 +279,7 @@ export const authenticateToken = async (token: string | undefined): Promise<Auth
     throw new HttpError(401, "登录已过期，请重新登录。");
   }
 
-  return session.user;
+  return resolveAuthorizedSessionUser(session);
 };
 
 export const sessionFromToken = async (token: string | undefined): Promise<AuthResponse> => {
@@ -180,8 +294,10 @@ export const sessionFromToken = async (token: string | undefined): Promise<AuthR
     throw new HttpError(401, "登录已过期，请重新登录。");
   }
 
+  const user = await resolveAuthorizedSessionUser(session);
+
   return {
-    user: session.user,
+    user,
     token,
     expiresAt: session.expiresAt
   };

@@ -9,6 +9,7 @@
 - 支持本地账号密码注册和登录，登录保活默认 120 小时。
 - 支持按用户隔离的历史对话记忆，左侧栏可选择历史会话。
 - 支持上传图片、PDF、文本、Markdown、CSV、JSON 和常见代码文件给 AI 分析。
+- 支持对最新新闻、体育赛果、价格、天气等时间敏感问题自动联网搜索，并把来源交给模型整理回答。
 - 当用户要求生成图片时，后端调用图片生成接口并把 PNG/JPG/WebP 图片保存到本地，前端直接预览并提供下载。
 - 当用户要求生成文件时，后端生成 Markdown 文档并提供下载链接。
 - 三套主题：白色、宝石蓝、黑色。用户气泡、助手气泡、输入框和面板颜色都有显式区分。
@@ -49,11 +50,59 @@ REQUEST_BODY_LIMIT=35mb
 MAX_UPLOAD_FILES=5
 MAX_UPLOAD_BYTES=10485760
 AUTH_TOKEN_TTL_HOURS=120
+AUTH_MODE=free
+DOMINANT_USERS_FILE=a.json
+
+ENABLE_WEB_SEARCH=true
+WEB_SEARCH_PROVIDER=auto
+WEB_SEARCH_MAX_RESULTS=5
+OPENAI_WEB_SEARCH_TOOL=true
+SERPER_API_KEY=
+BRAVE_SEARCH_API_KEY=
+TAVILY_API_KEY=
 ```
 
 `OPENAI_BASE_URL` 要填写完整 API 根地址，例如官方 OpenAI 是 `https://api.openai.com/v1`。`OPENAI_TEXT_API` 默认使用 Responses API；如果你接入的是只兼容 Chat Completions 的第三方服务，可改为 `chat`，但上传图片、PDF 或文件给 AI 时必须使用 `OPENAI_TEXT_API=responses`，且上游服务需要支持 `input_image` / `input_file`。
 
 如果上传后返回 `Upstream request failed`，通常是第三方转发服务不支持 Responses 文件输入、模型不支持视觉/文件能力，或 `OPENAI_BASE_URL` 缺少 `/v1` 这类路径。
+
+联网搜索默认会在问题包含“最新、今天、现在、新闻、赛程、赛果、比分、世界杯”等时间敏感词时触发。`WEB_SEARCH_PROVIDER=auto` 会优先使用已配置 API key 的搜索服务，然后尝试 DuckDuckGo 兜底。生产环境更推荐配置 `SERPER_API_KEY`、`BRAVE_SEARCH_API_KEY` 或 `TAVILY_API_KEY` 中的一个；如果使用官方 OpenAI Responses API，可保留 `OPENAI_WEB_SEARCH_TOOL=true` 让模型同时使用 OpenAI 托管搜索工具。第三方 OpenAI 代理不支持该工具时，把它改为 `false`。
+
+## 登录模式
+
+`AUTH_MODE=free` 是默认模式，用户可以在网页自行注册和登录，账号信息保存在 `storage/auth/users.json`。
+
+`AUTH_MODE=dominant` 是白名单模式，网页会隐藏注册入口，只有项目根目录 `a.json` 中配置的账号密码可以登录。`a.json` 已加入 `.gitignore`，不会被提交到 GitHub。可先复制示例文件：
+
+```bash
+cp a.example.json a.json
+```
+
+`a.json` 支持数组格式：
+
+```json
+[
+  {
+    "username": "admin",
+    "password": "your-strong-password"
+  }
+]
+```
+
+也支持对象格式：
+
+```json
+{
+  "users": [
+    {
+      "username": "admin",
+      "password": "your-strong-password"
+    }
+  ]
+}
+```
+
+每个 dominant 账号仍会按用户隔离保存历史对话。默认用户目录由账号名稳定生成，例如 `storage/users/dominant_xxx/`；如果你想固定历史目录，也可以给账号显式设置 `"id"`，之后只要这个 `id` 不变，历史会话就会继续归入同一目录。
 
 ## Ubuntu 运行
 
