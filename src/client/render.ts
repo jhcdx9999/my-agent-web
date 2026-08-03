@@ -17,6 +17,9 @@ const escapeHtml = (value: string): string =>
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
 
+const hasDownloadableAttachment = (message: ChatMessage): boolean =>
+  Boolean(message.attachments?.some((attachment) => attachment.url));
+
 const renderAttachment = (attachment: ChatAttachment): string => {
   if (attachment.kind === "image" && attachment.previewUrl) {
     return `
@@ -42,8 +45,9 @@ const renderAttachment = (attachment: ChatAttachment): string => {
           ? "已上传 PDF"
           : "已上传文件"
         : "下载文件";
+  const icon = attachment.kind === "pdf" ? "PDF" : attachment.kind === "data" ? "DATA" : "FILE";
   const inner = `
-      <span class="file-icon">↓</span>
+      <span class="file-icon">${icon}</span>
       <span>
         <strong>${label}</strong>
         <small>${escapeHtml(attachment.filename)}</small>
@@ -69,22 +73,77 @@ const renderPendingUpload = (attachment: ChatAttachment): string => `
   </div>
 `;
 
-const renderMessage = (message: ChatMessage): string => {
-  const attachments = message.attachments?.map(renderAttachment).join("") ?? "";
+const renderMessageActions = (message: ChatMessage, state: AppState): string => {
+  if (state.editingMessageId === message.id) {
+    return "";
+  }
+
+  if (message.role === "user") {
+    return `
+      <div class="message-actions">
+        <button class="message-action-button" type="button" data-edit-message="${message.id}" ${
+          state.pending || state.paused ? "disabled" : ""
+        }>重新编辑</button>
+      </div>
+    `;
+  }
 
   return `
-    <article class="message message-${message.role}">
+    <div class="message-actions">
+      <button class="message-action-button" type="button" data-copy-message="${message.id}">复制</button>
+      ${
+        hasDownloadableAttachment(message)
+          ? `<button class="message-action-button" type="button" data-download-message="${message.id}">下载</button>`
+          : ""
+      }
+    </div>
+  `;
+};
+
+const renderMessage = (message: ChatMessage, state: AppState): string => {
+  const attachments = message.attachments?.map(renderAttachment).join("") ?? "";
+  const isEditing = state.editingMessageId === message.id;
+
+  return `
+    <article class="message message-${message.role}" data-message-id="${message.id}">
       <div class="message-meta">
         <span>${message.role === "user" ? "你" : "GPT"}</span>
         <time datetime="${message.createdAt}">${formatTime(message.createdAt)}</time>
       </div>
       <div class="message-bubble">
-        <p>${escapeHtml(message.content).replaceAll("\n", "<br />")}</p>
-        ${attachments ? `<div class="attachments">${attachments}</div>` : ""}
+        ${
+          isEditing
+            ? `<form class="message-edit-form" data-edit-form="${message.id}">
+                <textarea name="content" rows="4">${escapeHtml(state.editingContent)}</textarea>
+                <div class="message-actions message-edit-actions">
+                  <button class="message-action-button primary" type="submit" ${
+                    state.pending ? "disabled" : ""
+                  }>提交修改</button>
+                  <button class="message-action-button" type="button" data-cancel-edit>取消</button>
+                </div>
+              </form>`
+            : `<p>${escapeHtml(message.content).replaceAll("\n", "<br />")}</p>
+              ${attachments ? `<div class="attachments">${attachments}</div>` : ""}`
+        }
       </div>
+      ${renderMessageActions(message, state)}
     </article>
   `;
 };
+
+const renderThinkingMessage = (state: AppState): string => `
+  <article class="message message-assistant message-waiting" aria-live="polite">
+    <div class="message-meta"><span>GPT</span><time>处理中</time></div>
+    <div class="message-bubble thinking">
+      <div class="thinking-head">
+        <span class="thinking-pulse"></span>
+        <strong>${escapeHtml(state.waitingTitle || "正在思考中")}</strong>
+      </div>
+      <p>${escapeHtml(state.waitingDetail || "正在拆解问题、整理上下文，并准备生成最终回答。")}</p>
+      <div class="thinking-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
+  </article>
+`;
 
 const renderThemeButton = (theme: ThemeName, activeTheme: ThemeName): string => {
   const labels: Record<ThemeName, string> = {
@@ -103,16 +162,27 @@ const renderThemeButton = (theme: ThemeName, activeTheme: ThemeName): string => 
 
 const renderConversation = (
   conversation: ConversationSummary,
-  activeConversationId?: string
+  activeConversationId: string | undefined,
+  pending: boolean
 ): string => `
-  <button
-    class="conversation-item ${conversation.id === activeConversationId ? "is-active" : ""}"
-    type="button"
-    data-conversation-id="${conversation.id}"
-  >
-    <span>${escapeHtml(conversation.title)}</span>
-    <small>${conversation.messageCount} 条 · ${formatTime(conversation.updatedAt)}</small>
-  </button>
+  <div class="conversation-row ${conversation.id === activeConversationId ? "is-active" : ""}">
+    <button
+      class="conversation-item"
+      type="button"
+      data-conversation-id="${conversation.id}"
+      ${pending ? "disabled" : ""}
+    >
+      <span>${escapeHtml(conversation.title)}</span>
+      <small>${conversation.messageCount} 条 · ${formatTime(conversation.updatedAt)}</small>
+    </button>
+    <button
+      class="conversation-delete-button"
+      type="button"
+      data-delete-conversation="${conversation.id}"
+      aria-label="删除 ${escapeHtml(conversation.title)}"
+      ${pending ? "disabled" : ""}
+    >删除</button>
+  </div>
 `;
 
 const renderLogin = (state: AppState): string => {
@@ -175,12 +245,12 @@ export const renderApp = (state: AppState): string => {
                 : "OpenAI Key 可选"
           }
         </button>
-        <button class="new-chat-button" id="newConversationButton" type="button">新建对话</button>
+        <button class="new-chat-button" id="newConversationButton" type="button" ${state.pending ? "disabled" : ""}>新建对话</button>
         <div class="conversation-list">
           ${
             state.conversations.length
               ? state.conversations
-                  .map((conversation) => renderConversation(conversation, state.activeConversationId))
+                  .map((conversation) => renderConversation(conversation, state.activeConversationId, state.pending))
                   .join("")
               : `<div class="conversation-empty">暂无历史</div>`
           }
@@ -202,7 +272,11 @@ export const renderApp = (state: AppState): string => {
           </section>
         </header>
 
-        <section class="chat-panel" aria-label="聊天窗口">
+        <section class="chat-panel ${
+          state.apiKeyPanelOpen || (state.requiresOpenAiApiKeyForText && !state.user.hasOpenAiApiKey)
+            ? "has-api-key-panel"
+            : ""
+        }" aria-label="聊天窗口">
           ${
             state.apiKeyPanelOpen || (state.requiresOpenAiApiKeyForText && !state.user.hasOpenAiApiKey)
               ? `<form class="api-key-panel" id="apiKeyForm">
@@ -212,8 +286,8 @@ export const renderApp = (state: AppState): string => {
                       state.textRuntime === "codex" && state.requiresOpenAiApiKeyForText
                         ? "Codex 文本模式会按服务器的 provider 配置使用该密钥；可填官方或兼容代理对应的 key。"
                         : state.requiresOpenAiApiKeyForText
-                        ? "文本对话、图片和上传能力会使用该密钥。"
-                        : "Codex 文本模式下可选；生成图片或分析图片/PDF/文件时仍会使用。"
+                          ? "文本对话、图片和上传能力会使用该密钥。"
+                          : "Codex 文本模式下可选；生成图片或分析图片/PDF/文件时仍会使用。"
                     }密钥只保存在服务器根目录 a.json。</span>
                   </div>
                   <input
@@ -234,20 +308,13 @@ export const renderApp = (state: AppState): string => {
           <div class="message-list" id="messageList">
             ${
               state.messages.length
-                ? state.messages.map(renderMessage).join("")
+                ? state.messages.map((message) => renderMessage(message, state)).join("")
                 : `<div class="empty-state">
                     <h2>开始和 GPT 对话</h2>
                     <p>可以聊天、上传附件、生成图片、生成文件，或让它整理统计一段数据。</p>
                   </div>`
             }
-            ${
-              state.pending
-                ? `<article class="message message-assistant">
-                    <div class="message-meta"><span>GPT</span><time>处理中</time></div>
-                    <div class="message-bubble thinking"><span></span><span></span><span></span></div>
-                  </article>`
-                : ""
-            }
+            ${state.pending ? renderThinkingMessage(state) : ""}
           </div>
 
           <form class="composer" id="chatForm">

@@ -46,7 +46,8 @@ const kindFromUpload = (attachment: ChatAttachment): ChatAttachment["kind"] => {
 
 const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
   const uploadCount = messages.reduce(
-    (count, message) => count + (message.attachments?.filter((item) => item.source === "uploaded").length ?? 0),
+    (count, message) =>
+      count + (message.attachments?.filter((item) => item.source === "uploaded" && item.dataUrl).length ?? 0),
     0
   );
 
@@ -62,7 +63,7 @@ const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
       }
 
       if (!attachment.dataUrl) {
-        throw new HttpError(400, `上传文件缺少内容：${attachment.filename}`);
+        return attachment;
       }
 
       if ((attachment.sizeBytes ?? 0) > appConfig.upload.maxBytesPerFile) {
@@ -87,7 +88,7 @@ const toApiMessages = (messages: ChatMessage[]) => {
     .map((message) => ({
       role: message.role,
       content: message.content.slice(0, appConfig.safety.maxMessageChars),
-      attachments: message.attachments?.filter((attachment) => attachment.source === "uploaded")
+      attachments: message.attachments?.filter((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
     }));
 
   return [
@@ -177,7 +178,9 @@ const needsWebSearch = (prompt: string): boolean => shouldUseWebSearch(prompt);
 
 const shouldUseCodexTextRuntime = (messages: ChatMessage[]): boolean =>
   appConfig.ai.textRuntime === "codex" &&
-  !messages.some((message) => message.attachments?.some((attachment) => attachment.source === "uploaded"));
+  !messages.some((message) =>
+    message.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
+  );
 
 const shouldUseCodexNetwork = (): boolean =>
   ["1", "true", "yes", "on", "enabled"].includes(appConfig.codex.networkAccess.trim().toLowerCase());
@@ -286,8 +289,12 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   const apiKey = await getUserOpenAiApiKey(user);
   const intent = detectIntent(normalizedMessages);
   const latestPrompt = getLatestPrompt(normalizedMessages);
+  const latestMessage = normalizedMessages[normalizedMessages.length - 1];
+  const latestHasUploadedAttachments = Boolean(
+    latestMessage?.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
+  );
   const hasUploadedAttachments = normalizedMessages.some((message) =>
-    message.attachments?.some((attachment) => attachment.source === "uploaded")
+    message.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
   );
   const textModel = appConfig.ai.textRuntime === "codex" && !hasUploadedAttachments ? codexModel : openAiModel;
   const requiresOpenAiApiKey =
@@ -304,7 +311,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
-  if (intent === "image" && !hasUploadedAttachments) {
+  if (intent === "image" && !latestHasUploadedAttachments) {
     const image = await generateImage(latestPrompt, apiKey!);
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,

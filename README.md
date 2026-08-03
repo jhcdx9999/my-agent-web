@@ -6,7 +6,7 @@
 
 - TypeScript 前端与 TypeScript Node/Express 后端。
 - 用户可在网页中和 GPT 对话，并直接看到回复。
-- 支持本地账号密码注册和登录，登录保活默认 120 小时。
+- 支持本地账号密码注册和登录，登录保活默认 7 天。
 - 支持按用户隔离的历史对话记忆，左侧栏可选择历史会话。
 - 支持上传图片、PDF、文本、Markdown、CSV、JSON 和常见代码文件给 AI 分析。
 - 支持对最新新闻、体育赛果、价格、天气等时间敏感问题自动联网搜索，并把来源交给模型整理回答。
@@ -71,7 +71,7 @@ OPENAI_IMAGE_FORMAT=png
 REQUEST_BODY_LIMIT=35mb
 MAX_UPLOAD_FILES=5
 MAX_UPLOAD_BYTES=10485760
-AUTH_TOKEN_TTL_HOURS=120
+AUTH_TOKEN_TTL_HOURS=168
 AUTH_MODE=free
 DOMINANT_USERS_FILE=a.json
 

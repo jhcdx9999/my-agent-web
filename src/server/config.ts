@@ -93,7 +93,7 @@ export const appConfig = {
   authDir: path.resolve(process.cwd(), "storage", "auth"),
   usersDir: path.resolve(process.cwd(), "storage", "users"),
   dominantUsersFile: path.resolve(process.cwd(), process.env.DOMINANT_USERS_FILE ?? "a.json"),
-  tokenTtlMs: intFromEnv(process.env.AUTH_TOKEN_TTL_HOURS, 120) * 60 * 60 * 1000,
+  tokenTtlMs: intFromEnv(process.env.AUTH_TOKEN_TTL_HOURS, 168) * 60 * 60 * 1000,
   auth: {
     mode: authMode
   },

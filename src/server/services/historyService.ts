@@ -49,9 +49,19 @@ const compactMessage = (message: ChatMessage): ChatMessage => ({
 });
 
 const titleFromMessages = (messages: ChatMessage[]): string => {
-  const firstUserMessage = messages.find((message) => message.role === "user")?.content ?? "新对话";
-  return firstUserMessage.replace(/\s+/g, " ").trim().slice(0, 36) || "新对话";
+  const firstUserMessage = messages.find((message) => message.role === "user")?.content ?? "";
+  const normalized = firstUserMessage
+    .replace(/\s+/g, " ")
+    .replace(/^(请|帮我|麻烦|查询|查一下|生成|创建|制作|写一个|给我)\s*/u, "")
+    .trim();
+  return normalized.slice(0, 28) || "等待第一条消息";
 };
+
+const shouldRefreshTitle = (title: string | undefined, messages: ChatMessage[]): boolean =>
+  !title ||
+  title === "新对话" ||
+  title === "等待第一条消息" ||
+  messages.filter((message) => message.role === "user").length <= 1;
 
 const readIndex = async (user: AuthUser): Promise<ConversationSummary[]> => {
   await ensureDirectory(conversationsDir(user));
@@ -117,7 +127,9 @@ export const saveConversation = async (
   const compactMessages = messages.map(compactMessage);
   const conversation: StoredConversation = {
     id,
-    title: existing?.title ?? titleFromMessages(compactMessages),
+    title: shouldRefreshTitle(existing?.title, compactMessages)
+      ? titleFromMessages(compactMessages)
+      : existing?.title ?? titleFromMessages(compactMessages),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     messageCount: compactMessages.length,
@@ -145,7 +157,7 @@ export const createEmptyConversation = async (user: AuthUser): Promise<Conversat
   const now = new Date().toISOString();
   const conversation: ConversationDetail = {
     id: createId("conv"),
-    title: "新对话",
+    title: "等待第一条消息",
     createdAt: now,
     updatedAt: now,
     messageCount: 0,
@@ -156,4 +168,17 @@ export const createEmptyConversation = async (user: AuthUser): Promise<Conversat
   await writeIndex(user, [conversation, ...(await readIndex(user))]);
 
   return conversation;
+};
+
+export const deleteConversation = async (user: AuthUser, conversationId: string): Promise<void> => {
+  const existing = await readConversation(user, conversationId);
+  if (!existing) {
+    return;
+  }
+
+  await fs.rm(conversationPath(user, conversationId), { force: true });
+  await writeIndex(
+    user,
+    (await readIndex(user)).filter((item) => item.id !== conversationId)
+  );
 };

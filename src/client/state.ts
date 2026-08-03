@@ -33,6 +33,10 @@ export interface AppState {
   paused: boolean;
   pending: boolean;
   statusText: string;
+  waitingTitle: string;
+  waitingDetail: string;
+  editingMessageId?: string;
+  editingContent: string;
 }
 
 export const createInitialState = (): AppState => ({
@@ -56,7 +60,10 @@ export const createInitialState = (): AppState => ({
   theme: "white",
   paused: false,
   pending: false,
-  statusText: "准备就绪"
+  statusText: "准备就绪",
+  waitingTitle: "",
+  waitingDetail: "",
+  editingContent: ""
 });
 
 export const createUserMessage = (

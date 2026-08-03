@@ -13,6 +13,7 @@ import {
 } from "./services/authService";
 import {
   createEmptyConversation,
+  deleteConversation,
   getConversation,
   listConversations,
   saveConversation
@@ -152,6 +153,19 @@ export const createRouter = (): express.Router => {
         }
 
         response.json(conversation);
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.delete(
+    "/conversations/:conversationId",
+    requireAuth,
+    async (request: AuthedRequest, response, next) => {
+      try {
+        await deleteConversation(request.user!, request.params.conversationId);
+        response.json({ ok: true });
       } catch (error) {
         next(error);
       }

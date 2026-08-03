@@ -2,6 +2,7 @@ import "./styles.css";
 import {
   clearAuthToken,
   createConversation,
+  deleteConversation as deleteConversationRequest,
   fetchAppConfig,
   fetchConversation,
   fetchConversations,
@@ -18,7 +19,7 @@ import { applyTheme, readStoredTheme } from "./theme";
 import { createInitialState, createUserMessage, type AppState } from "./state";
 import { renderApp } from "./render";
 import { createClientId } from "./id";
-import type { AuthResponse, AuthUser, ChatAttachment, ConversationSummary } from "../shared/types";
+import type { AuthResponse, AuthUser, ChatAttachment, ChatMessage, ConversationSummary } from "../shared/types";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 const storedUser = localStorage.getItem("custom-gpt-user");
@@ -40,12 +41,24 @@ let state: AppState = {
   theme: readStoredTheme()
 };
 
-const updateState = (patch: Partial<AppState>): void => {
+let waitingTimer: number | undefined;
+let activeRequestId = 0;
+
+const draw = (scrollToBottom = true): void => {
+  applyTheme(state.theme);
+  root.innerHTML = renderApp(state);
+  bindEvents();
+  if (scrollToBottom) {
+    scrollMessagesToBottom();
+  }
+};
+
+const updateState = (patch: Partial<AppState>, options: { scroll?: boolean } = {}): void => {
   state = {
     ...state,
     ...patch
   };
-  draw();
+  draw(options.scroll ?? true);
 };
 
 const rememberAuth = (response: AuthResponse): void => {
@@ -208,7 +221,7 @@ const loadConversations = async (): Promise<void> => {
   }
 
   try {
-    updateState({ conversations: await fetchConversations() });
+    updateState({ conversations: await fetchConversations() }, { scroll: false });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("401")) {
@@ -228,12 +241,15 @@ const restoreSession = async (): Promise<void> => {
   try {
     const session = await fetchSession();
     rememberAuth(session);
-    updateState({
-      user: session.user,
-      authToken: session.token,
-      authExpiresAt: session.expiresAt,
-      authError: ""
-    });
+    updateState(
+      {
+        user: session.user,
+        authToken: session.token,
+        authExpiresAt: session.expiresAt,
+        authError: ""
+      },
+      { scroll: false }
+    );
     void loadConversations();
   } catch {
     forgetAuth();
@@ -251,8 +267,10 @@ const selectConversation = async (conversationId: string): Promise<void> => {
     const conversation = await fetchConversation(conversationId);
     updateState({
       activeConversationId: conversation.id,
-      messages: conversation.messages,
+      messages: compactMessagesForState(conversation.messages),
       pendingUploads: [],
+      editingMessageId: undefined,
+      editingContent: "",
       statusText: "历史对话已加载"
     });
   } catch (error) {
@@ -265,6 +283,9 @@ const upsertConversation = (conversation: ConversationSummary): ConversationSumm
   conversation,
   ...state.conversations.filter((item) => item.id !== conversation.id)
 ];
+
+const removeConversationFromState = (conversationId: string): ConversationSummary[] =>
+  state.conversations.filter((conversation) => conversation.id !== conversationId);
 
 const handleAuthSuccess = (response: AuthResponse, statusText: string): void => {
   rememberAuth(response);
@@ -281,10 +302,236 @@ const handleAuthSuccess = (response: AuthResponse, statusText: string): void => 
     messages: [],
     conversations: [],
     activeConversationId: undefined,
+    editingMessageId: undefined,
+    editingContent: "",
     authError: "",
     statusText
   });
   void loadConversations();
+};
+
+const getLatestUserPrompt = (messages: ChatMessage[]): string =>
+  [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
+
+const promptNeedsImage = (prompt: string): boolean =>
+  /(生成|画|绘制|做一张|来一张|create|generate|draw|image|picture|photo|海报|插画|图片)/i.test(prompt);
+
+const promptNeedsFile = (prompt: string): boolean =>
+  /(生成|创建|导出|保存|下载|文件|文档|表格|csv|xlsx|json|txt|md|markdown|report|download|file)/i.test(prompt);
+
+const promptNeedsSearch = (prompt: string): boolean =>
+  /(最新|现在|目前|今天|昨日|昨天|明天|本周|本月|今年|实时|联网|搜索|查询|查一下|新闻|赛程|赛果|比分|排名|积分榜|世界杯|current|latest|today|news|score|schedule|standing|price|weather)/i.test(prompt);
+
+const hasNewUploads = (messages: ChatMessage[]): boolean =>
+  messages.some((message) =>
+    message.attachments?.some((attachment) => attachment.source === "uploaded" && Boolean(attachment.dataUrl))
+  );
+
+const compactAttachmentForState = (attachment: ChatAttachment): ChatAttachment => {
+  if (attachment.source !== "uploaded") {
+    return attachment;
+  }
+
+  return {
+    id: attachment.id,
+    kind: attachment.kind,
+    filename: attachment.filename,
+    mimeType: attachment.mimeType,
+    source: attachment.source,
+    url: attachment.url,
+    description: attachment.description,
+    sizeBytes: attachment.sizeBytes
+  };
+};
+
+const compactMessagesForState = (messages: ChatMessage[]): ChatMessage[] =>
+  messages.map((message) => ({
+    ...message,
+    attachments: message.attachments?.map(compactAttachmentForState)
+  }));
+
+const waitingStagesFor = (prompt: string, messages: ChatMessage[]): Array<{ title: string; detail: string }> => {
+  const stages = [
+    {
+      title: "正在思考中",
+      detail: "正在理解你的目标、上下文和约束，准备组织回答路径。"
+    }
+  ];
+
+  if (hasNewUploads(messages)) {
+    stages.push({
+      title: "正在读取附件",
+      detail: "正在整理上传内容，并判断哪些信息需要进入本次回答。"
+    });
+  }
+
+  if (promptNeedsSearch(prompt)) {
+    stages.push({
+      title: "正在搜索中",
+      detail: "正在优先检查权威来源，避免只依赖不完整的搜索摘要。"
+    });
+  }
+
+  if (promptNeedsImage(prompt)) {
+    stages.push({
+      title: "正在生成图片",
+      detail: "正在解析画面要求、尺寸和格式，生成后会直接展示在对话中。"
+    });
+  } else if (promptNeedsFile(prompt)) {
+    stages.push({
+      title: "正在生成文件",
+      detail: "正在整理内容结构，完成后会提供可点击下载的文件。"
+    });
+  }
+
+  stages.push(
+    {
+      title: "正在整理答案",
+      detail: "正在把结论、依据和来源组织成更清晰的回复。"
+    },
+    {
+      title: "正在检查格式",
+      detail: "正在检查表格、链接、下载项和最终排版。"
+    }
+  );
+
+  return stages;
+};
+
+const stopWaitingCycle = (): void => {
+  if (waitingTimer !== undefined) {
+    window.clearInterval(waitingTimer);
+    waitingTimer = undefined;
+  }
+};
+
+const startWaitingCycle = (stages: Array<{ title: string; detail: string }>): void => {
+  stopWaitingCycle();
+  let index = 0;
+
+  waitingTimer = window.setInterval(() => {
+    if (!state.pending) {
+      stopWaitingCycle();
+      return;
+    }
+
+    index = (index + 1) % stages.length;
+    const stage = stages[index];
+    updateState(
+      {
+        waitingTitle: stage.title,
+        waitingDetail: stage.detail,
+        statusText: stage.title
+      },
+      { scroll: true }
+    );
+  }, 2600);
+};
+
+const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
+  const requestId = activeRequestId + 1;
+  activeRequestId = requestId;
+  const latestPrompt = getLatestUserPrompt(nextMessages);
+  const requiresOpenAiApiKey = state.requiresOpenAiApiKeyForText || hasNewUploads(nextMessages) || promptNeedsImage(latestPrompt);
+
+  if (requiresOpenAiApiKey && !state.user?.hasOpenAiApiKey) {
+    updateState({
+      apiKeyPanelOpen: true,
+      apiKeyError:
+        state.textRuntime === "codex" && !state.requiresOpenAiApiKeyForText
+          ? "当前文本由 Codex 处理，但上传附件或生成图片仍需要 OpenAI API key。"
+          : "请先配置你的 OpenAI API key。",
+      statusText: "等待配置 OpenAI API key"
+    });
+    return;
+  }
+
+  const stages = waitingStagesFor(latestPrompt, nextMessages);
+  const firstStage = stages[0];
+  updateState({
+    messages: nextMessages,
+    pendingUploads: [],
+    pending: true,
+    editingMessageId: undefined,
+    editingContent: "",
+    waitingTitle: firstStage.title,
+    waitingDetail: firstStage.detail,
+    statusText: firstStage.title
+  });
+  startWaitingCycle(stages);
+
+  try {
+    const response = await sendChat({
+      messages: nextMessages,
+      model: state.selectedModel,
+      conversationId: state.activeConversationId,
+      paused: false
+    });
+
+    if (requestId !== activeRequestId) {
+      return;
+    }
+
+    stopWaitingCycle();
+    updateState({
+      messages: [...compactMessagesForState(nextMessages), response.message],
+      activeConversationId: response.conversation?.id ?? state.activeConversationId,
+      conversations: response.conversation ? upsertConversation(response.conversation) : state.conversations,
+      pending: false,
+      waitingTitle: "",
+      waitingDetail: "",
+      statusText: response.intent === "chat" ? "准备就绪" : "任务已完成"
+    });
+  } catch (error) {
+    if (requestId !== activeRequestId) {
+      return;
+    }
+
+    stopWaitingCycle();
+    const message = error instanceof Error ? error.message : String(error);
+    updateState({
+      messages: [
+        ...nextMessages,
+        {
+          id: createClientId("msg"),
+          role: "assistant",
+          content: `请求失败：${message}`,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      pending: false,
+      waitingTitle: "",
+      waitingDetail: "",
+      statusText: "请求失败"
+    });
+  }
+};
+
+const copyText = async (text: string): Promise<void> => {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+};
+
+const downloadUrl = (url: string, filename: string): void => {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
 };
 
 const bindAuthEvents = (): void => {
@@ -299,10 +546,7 @@ const bindAuthEvents = (): void => {
 
     try {
       const shouldRegister = state.authLoginMode === "free" && state.authMode === "register";
-      const response =
-        shouldRegister
-          ? await register({ username, password })
-          : await login({ username, password });
+      const response = shouldRegister ? await register({ username, password }) : await login({ username, password });
       handleAuthSuccess(response, shouldRegister ? "注册成功" : "登录成功");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -317,34 +561,72 @@ const bindAuthEvents = (): void => {
 
     const authMode = state.authMode === "login" ? "register" : "login";
     history.replaceState(null, "", `${location.pathname}${location.search}#/${authMode}`);
-    updateState({
-      authMode,
-      authError: ""
-    });
+    updateState(
+      {
+        authMode,
+        authError: ""
+      },
+      { scroll: false }
+    );
   });
 };
 
-const bindEvents = (): void => {
+function bindEvents(): void {
   bindAuthEvents();
 
   document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
     button.addEventListener("click", () => {
       const theme = button.dataset.themeChoice as AppState["theme"];
       applyTheme(theme);
-      updateState({ theme });
+      updateState({ theme }, { scroll: false });
     });
   });
 
   document.querySelectorAll<HTMLButtonElement>("[data-conversation-id]").forEach((button) => {
     button.addEventListener("click", () => {
       const conversationId = button.dataset.conversationId;
-      if (conversationId) {
+      if (conversationId && !state.pending) {
         void selectConversation(conversationId);
       }
     });
   });
 
+  document.querySelectorAll<HTMLButtonElement>("[data-delete-conversation]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const conversationId = button.dataset.deleteConversation;
+      if (state.pending) {
+        return;
+      }
+      if (!conversationId || !window.confirm("确定删除这个历史对话吗？")) {
+        return;
+      }
+
+      try {
+        await deleteConversationRequest(conversationId);
+        const isActive = state.activeConversationId === conversationId;
+        updateState(
+          {
+            conversations: removeConversationFromState(conversationId),
+            activeConversationId: isActive ? undefined : state.activeConversationId,
+            messages: isActive ? [] : state.messages,
+            editingMessageId: undefined,
+            editingContent: "",
+            statusText: "历史对话已删除"
+          },
+          { scroll: false }
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateState({ statusText: `删除失败：${message}` }, { scroll: false });
+      }
+    });
+  });
+
   document.querySelector<HTMLButtonElement>("#newConversationButton")?.addEventListener("click", async () => {
+    if (state.pending) {
+      return;
+    }
+
     try {
       const conversation = await createConversation();
       updateState({
@@ -352,6 +634,8 @@ const bindEvents = (): void => {
         conversations: upsertConversation(conversation),
         messages: [],
         pendingUploads: [],
+        editingMessageId: undefined,
+        editingContent: "",
         statusText: "新对话已创建"
       });
     } catch (error) {
@@ -361,6 +645,8 @@ const bindEvents = (): void => {
   });
 
   document.querySelector<HTMLButtonElement>("#logoutButton")?.addEventListener("click", async () => {
+    activeRequestId += 1;
+    stopWaitingCycle();
     await logout().catch(() => undefined);
     forgetAuth();
     updateState({
@@ -373,15 +659,20 @@ const bindEvents = (): void => {
       pendingUploads: [],
       apiKeyPanelOpen: false,
       apiKeyError: "",
+      editingMessageId: undefined,
+      editingContent: "",
       authError: ""
     });
   });
 
   document.querySelector<HTMLButtonElement>("#toggleApiKeyPanel")?.addEventListener("click", () => {
-    updateState({
-      apiKeyPanelOpen: !state.apiKeyPanelOpen,
-      apiKeyError: ""
-    });
+    updateState(
+      {
+        apiKeyPanelOpen: !state.apiKeyPanelOpen,
+        apiKeyError: ""
+      },
+      { scroll: false }
+    );
   });
 
   document.querySelector<HTMLFormElement>("#apiKeyForm")?.addEventListener("submit", async (event) => {
@@ -390,7 +681,7 @@ const bindEvents = (): void => {
     const formData = new FormData(form);
     const apiKey = String(formData.get("apiKey") ?? "");
 
-    updateState({ apiKeySaving: true, apiKeyError: "" });
+    updateState({ apiKeySaving: true, apiKeyError: "" }, { scroll: false });
 
     try {
       const result = await saveOpenAiApiKey(apiKey);
@@ -403,8 +694,87 @@ const bindEvents = (): void => {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      updateState({ apiKeySaving: false, apiKeyError: message });
+      updateState({ apiKeySaving: false, apiKeyError: message }, { scroll: false });
     }
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-copy-message]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const message = state.messages.find((item) => item.id === button.dataset.copyMessage);
+      if (!message) {
+        return;
+      }
+
+      try {
+        await copyText(message.content);
+        updateState({ statusText: "回复已复制" }, { scroll: false });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        updateState({ statusText: `复制失败：${errorMessage}` }, { scroll: false });
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-download-message]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const message = state.messages.find((item) => item.id === button.dataset.downloadMessage);
+      const attachments = message?.attachments?.filter((attachment) => attachment.url) ?? [];
+      attachments.forEach((attachment) => {
+        window.setTimeout(() => downloadUrl(attachment.url!, attachment.filename), 0);
+      });
+      updateState({ statusText: attachments.length ? "下载已开始" : "没有可下载附件" }, { scroll: false });
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-edit-message]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const message = state.messages.find((item) => item.id === button.dataset.editMessage);
+      if (!message || message.role !== "user") {
+        return;
+      }
+
+      updateState(
+        {
+          editingMessageId: message.id,
+          editingContent: message.content,
+          statusText: "正在编辑历史消息"
+        },
+        { scroll: false }
+      );
+    });
+  });
+
+  document.querySelector<HTMLButtonElement>("[data-cancel-edit]")?.addEventListener("click", () => {
+    updateState(
+      {
+        editingMessageId: undefined,
+        editingContent: "",
+        statusText: "准备就绪"
+      },
+      { scroll: false }
+    );
+  });
+
+  document.querySelectorAll<HTMLFormElement>("[data-edit-form]").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const messageId = form.dataset.editForm;
+      const index = state.messages.findIndex((message) => message.id === messageId);
+      const content = String(new FormData(form).get("content") ?? "").trim();
+
+      if (index < 0 || !content || state.messages[index].role !== "user") {
+        return;
+      }
+
+      const currentMessages = compactMessagesForState(state.messages);
+      const editedMessage: ChatMessage = {
+        ...currentMessages[index],
+        content,
+        createdAt: new Date().toISOString()
+      };
+      const nextMessages = [...currentMessages.slice(0, index), editedMessage];
+      void submitMessages(nextMessages);
+    });
   });
 
   const pauseButton = document.querySelector<HTMLButtonElement>("#pauseButton");
@@ -417,7 +787,7 @@ const bindEvents = (): void => {
 
   const modelSelect = document.querySelector<HTMLSelectElement>("#modelSelect");
   modelSelect?.addEventListener("change", () => {
-    updateState({ selectedModel: modelSelect.value });
+    updateState({ selectedModel: modelSelect.value }, { scroll: false });
   });
 
   const fileInput = document.querySelector<HTMLInputElement>("#fileInput");
@@ -449,96 +819,37 @@ const bindEvents = (): void => {
   });
 
   const form = document.querySelector<HTMLFormElement>("#chatForm");
-  form?.addEventListener("submit", async (event) => {
+  form?.addEventListener("submit", (event) => {
     event.preventDefault();
     const prompt = textarea?.value.trim() ?? "";
     if ((!prompt && state.pendingUploads.length === 0) || state.pending || state.paused) {
       return;
     }
 
-    const promptNeedsImage = /(生成|画|绘制|做一张|来一张|create|generate|draw|image|picture|photo|海报|插画|图片)/i.test(prompt);
-    const requiresOpenAiApiKey =
-      state.requiresOpenAiApiKeyForText || state.pendingUploads.length > 0 || promptNeedsImage;
-
-    if (requiresOpenAiApiKey && !state.user?.hasOpenAiApiKey) {
-      updateState({
-        apiKeyPanelOpen: true,
-        apiKeyError:
-          state.textRuntime === "codex" && !state.requiresOpenAiApiKeyForText
-            ? "当前文本由 Codex 处理，但上传附件或生成图片仍需要 OpenAI API key。"
-            : "请先配置你的 OpenAI API key。",
-        statusText: "等待配置 OpenAI API key"
-      });
-      return;
-    }
-
     const userMessage = createUserMessage(prompt || "请分析我上传的附件。", state.pendingUploads);
-    const nextMessages = [...state.messages, userMessage];
-    updateState({
-      messages: nextMessages,
-      pendingUploads: [],
-      pending: true,
-      statusText: "GPT 正在处理"
-    });
-
-    try {
-      const response = await sendChat({
-        messages: nextMessages,
-        model: state.selectedModel,
-        conversationId: state.activeConversationId,
-        paused: false
-      });
-
-      updateState({
-        messages: [...nextMessages, response.message],
-        activeConversationId: response.conversation?.id ?? state.activeConversationId,
-        conversations: response.conversation
-          ? upsertConversation(response.conversation)
-          : state.conversations,
-        pending: false,
-        statusText: response.intent === "chat" ? "准备就绪" : "任务已完成"
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateState({
-        messages: [
-          ...nextMessages,
-          {
-            id: createClientId("msg"),
-            role: "assistant",
-            content: `请求失败：${message}`,
-            createdAt: new Date().toISOString()
-          }
-        ],
-        pending: false,
-        statusText: "请求失败"
-      });
-    }
+    const nextMessages = [...compactMessagesForState(state.messages), userMessage];
+    void submitMessages(nextMessages);
   });
-};
-
-const draw = (): void => {
-  applyTheme(state.theme);
-  root.innerHTML = renderApp(state);
-  bindEvents();
-  scrollMessagesToBottom();
-};
+}
 
 const loadConfig = async (): Promise<void> => {
   try {
     const config = await fetchAppConfig();
-    updateState({
-      authLoginMode: config.auth.mode,
-      authMode: readAuthMode(config.auth.mode),
-      availableModels: config.models,
-      selectedModel: config.defaultModel || config.models[0] || "",
-      textRuntime: config.textRuntime,
-      requiresOpenAiApiKeyForText: config.requiresOpenAiApiKeyForText,
-      uploadAccept: config.upload.accept,
-      uploadMaxFiles: config.upload.maxFiles,
-      uploadMaxBytesPerFile: config.upload.maxBytesPerFile,
-      statusText: "准备就绪"
-    });
+    updateState(
+      {
+        authLoginMode: config.auth.mode,
+        authMode: readAuthMode(config.auth.mode),
+        availableModels: config.models,
+        selectedModel: config.defaultModel || config.models[0] || "",
+        textRuntime: config.textRuntime,
+        requiresOpenAiApiKeyForText: config.requiresOpenAiApiKeyForText,
+        uploadAccept: config.upload.accept,
+        uploadMaxFiles: config.upload.maxFiles,
+        uploadMaxBytesPerFile: config.upload.maxBytesPerFile,
+        statusText: "准备就绪"
+      },
+      { scroll: false }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     updateState({
@@ -555,9 +866,12 @@ void restoreSession();
 
 window.addEventListener("hashchange", () => {
   if (!state.user) {
-    updateState({
-      authMode: readAuthMode(state.authLoginMode),
-      authError: ""
-    });
+    updateState(
+      {
+        authMode: readAuthMode(state.authLoginMode),
+        authError: ""
+      },
+      { scroll: false }
+    );
   }
 });

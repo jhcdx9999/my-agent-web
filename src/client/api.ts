@@ -125,6 +125,15 @@ export const fetchConversation = async (conversationId: string): Promise<Convers
     })
   );
 
+export const deleteConversation = async (conversationId: string): Promise<void> => {
+  await parseJson<{ ok: boolean }>(
+    await fetch(`/api/conversations/${encodeURIComponent(conversationId)}`, {
+      method: "DELETE",
+      headers: authHeaders()
+    })
+  );
+};
+
 export const sendChat = async (payload: ChatRequest): Promise<ChatResponse> =>
   parseJson<ChatResponse>(
     await fetch("/api/chat", {
