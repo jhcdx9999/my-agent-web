@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { appConfig } from "../config";
 import { HttpError } from "../errors";
@@ -50,6 +51,55 @@ type ActiveTurn = {
 const normalizeReasoning = (value: string): string =>
   value === "extra-high" ? "xhigh" : value;
 
+const tomlString = (value: string): string =>
+  JSON.stringify(value);
+
+const buildCodexConfigToml = (): string => {
+  const lines = [
+    `model_provider = ${tomlString(appConfig.codex.modelProvider)}`,
+    `model = ${tomlString(appConfig.codex.defaultModel)}`,
+    `review_model = ${tomlString(appConfig.codex.defaultModel)}`,
+    `model_reasoning_effort = ${tomlString(normalizeReasoning(appConfig.codex.reasoningEffort))}`,
+    `disable_response_storage = ${appConfig.codex.disableResponseStorage}`,
+    `network_access = ${tomlString(appConfig.codex.networkAccess)}`,
+    "windows_wsl_setup_acknowledged = true",
+    "",
+    `[model_providers.${tomlString(appConfig.codex.modelProvider)}]`,
+    `name = ${tomlString(appConfig.codex.modelProvider)}`,
+    `base_url = ${tomlString(appConfig.codex.providerBaseUrl)}`,
+    `wire_api = ${tomlString(appConfig.codex.wireApi)}`,
+    `requires_openai_auth = ${appConfig.codex.requiresOpenAiAuth}`
+  ];
+
+  if (appConfig.codex.supportsWebsockets) {
+    lines.push("supports_websockets = true");
+  }
+
+  lines.push("", "[features]");
+  if (appConfig.codex.features.responsesWebsocketsV2) {
+    lines.push("responses_websockets_v2 = true");
+  }
+  if (appConfig.codex.features.goals) {
+    lines.push("goals = true");
+  }
+
+  return `${lines.join("\n")}\n`;
+};
+
+const prepareUserCodexHome = async (userId: string): Promise<string> => {
+  const codexHome = path.join(appConfig.usersDir, userId, "codex-home");
+  await ensureDirectory(codexHome);
+
+  const configPath = path.join(codexHome, "config.toml");
+  if (appConfig.codex.configTemplate) {
+    await fs.copyFile(appConfig.codex.configTemplate, configPath);
+  } else {
+    await fs.writeFile(configPath, buildCodexConfigToml(), "utf8");
+  }
+
+  return codexHome;
+};
+
 const promptFromMessages = (messages: ChatApiMessage[]): string => {
   const system = messages.find((message) => message.role === "system")?.content.trim();
   const turns = messages
@@ -97,6 +147,59 @@ const parseTokenUsage = (
   };
 };
 
+const stringifyCompact = (value: unknown, maxLength = 1000): string | undefined => {
+  try {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    if (!text) {
+      return undefined;
+    }
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+  } catch {
+    return undefined;
+  }
+};
+
+const messageFromRecord = (record: Record<string, unknown>): string | undefined => {
+  const message = record.message;
+  const detail = record.detail ?? record.details;
+  const code = record.code ?? record.type;
+
+  const messageText =
+    typeof message === "string" && message.trim()
+      ? message.trim()
+      : detail && typeof detail === "string" && detail.trim()
+        ? detail.trim()
+        : undefined;
+
+  if (!messageText) {
+    return undefined;
+  }
+
+  return typeof code === "string" && code.trim() ? `${messageText} (${code.trim()})` : messageText;
+};
+
+const codexNotificationErrorMessage = (params: Record<string, unknown>): string => {
+  const direct = messageFromRecord(params);
+  if (direct) {
+    return direct;
+  }
+
+  for (const key of ["error", "data", "details", "cause"]) {
+    const nested = params[key];
+    if (nested && typeof nested === "object") {
+      const nestedMessage = messageFromRecord(nested as Record<string, unknown>);
+      if (nestedMessage) {
+        return nestedMessage;
+      }
+    }
+    if (typeof nested === "string" && nested.trim()) {
+      return nested.trim();
+    }
+  }
+
+  return stringifyCompact(params) ?? "Codex app-server error.";
+};
+
 class CodexAppServerClient {
   private child: ChildProcess | null = null;
   private stdoutBuffer = "";
@@ -118,7 +221,7 @@ class CodexAppServerClient {
       const message = error instanceof Error ? error.message : String(error);
       throw new HttpError(
         502,
-        `Codex app-server 启动失败：${message}。请确认服务器已安装 Codex CLI，codex app-server --help 可以正常运行，并且当前用户已配置可用的 OpenAI API key。`
+        `Codex app-server 启动失败：${message}。请确认服务器已安装 Codex CLI，codex app-server --help 可以正常运行，并且 CODEX_PROVIDER_BASE_URL / CODEX_CONFIG_TEMPLATE 与用户 API key 匹配。`
       );
     }
 
@@ -232,16 +335,17 @@ class CodexAppServerClient {
   }
 
   private async start(): Promise<void> {
-    const codexHome = path.join(appConfig.usersDir, this.userId, "codex-home");
-    await ensureDirectory(codexHome);
+    const codexHome = appConfig.codex.authMode === "user-api-key"
+      ? await prepareUserCodexHome(this.userId)
+      : "";
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(appConfig.codex.authMode === "user-api-key" ? { OPENAI_API_KEY: this.apiKey, CODEX_HOME: codexHome } : {})
+    };
 
     this.child = spawn(appConfig.codex.command, ["app-server", "--listen", "stdio://"], {
       cwd: appConfig.codex.workingDirectory,
-      env: {
-        ...process.env,
-        ...(appConfig.codex.authMode === "user-api-key" ? { OPENAI_API_KEY: this.apiKey } : {}),
-        CODEX_HOME: codexHome
-      },
+      env,
       stdio: ["pipe", "pipe", "pipe"]
     });
 
@@ -442,7 +546,7 @@ class CodexAppServerClient {
         break;
       }
       case "error":
-        this.finishTurnWithError(turn, new Error(String(params.message ?? "Codex app-server error.")));
+        this.finishTurnWithError(turn, new Error(codexNotificationErrorMessage(params)));
         break;
       default:
         break;

@@ -1,6 +1,12 @@
 import "dotenv/config";
+import os from "node:os";
 import path from "node:path";
 import type { AuthLoginMode, TextRuntime } from "../shared/types";
+
+const stringFromEnv = (value: string | undefined, fallback: string): string => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+};
 
 const boolFromEnv = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined || value.trim() === "") {
@@ -24,11 +30,32 @@ const csvFromEnv = (value: string | undefined, fallback: string[]): string[] => 
   return items && items.length > 0 ? items : fallback;
 };
 
+const pathFromEnv = (value: string | undefined): string => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const expanded =
+    trimmed === "~"
+      ? os.homedir()
+      : trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+        ? path.join(os.homedir(), trimmed.slice(2))
+        : trimmed;
+  return path.resolve(process.cwd(), expanded);
+};
+
 const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.5";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
 const codexAuthMode = process.env.CODEX_AUTH_MODE === "server-login" ? "server-login" : "user-api-key";
+const codexModelProvider = stringFromEnv(process.env.CODEX_MODEL_PROVIDER, "OpenAI");
+const codexProviderBaseUrl = stringFromEnv(process.env.CODEX_PROVIDER_BASE_URL, openaiBaseUrl).replace(/\/$/, "");
+const codexSupportsWebsockets = boolFromEnv(
+  process.env.CODEX_SUPPORTS_WEBSOCKETS,
+  boolFromEnv(process.env.CODEX_RESPONSES_WEBSOCKETS_V2, false)
+);
 const reasoningEffort = ["minimal", "low", "medium", "high", "xhigh"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
   ? process.env.OPENAI_REASONING_EFFORT!
   : "xhigh";
@@ -85,7 +112,7 @@ export const appConfig = {
     imageFormat: process.env.OPENAI_IMAGE_FORMAT ?? "png"
   },
   codex: {
-    command: process.env.CODEX_COMMAND ?? "codex",
+    command: stringFromEnv(process.env.CODEX_COMMAND, "codex"),
     defaultModel: process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0] ?? "gpt-5.5",
     models: configuredCodexModels.includes(process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0])
       ? configuredCodexModels
@@ -95,7 +122,19 @@ export const appConfig = {
     workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),
     sandbox: process.env.CODEX_SANDBOX === "workspace-write" ? "workspace-write" : "read-only",
     approvalPolicy: process.env.CODEX_APPROVAL_POLICY ?? "on-request",
-    authMode: codexAuthMode
+    authMode: codexAuthMode,
+    configTemplate: pathFromEnv(process.env.CODEX_CONFIG_TEMPLATE),
+    modelProvider: codexModelProvider,
+    providerBaseUrl: codexProviderBaseUrl,
+    wireApi: process.env.CODEX_WIRE_API === "chat" ? "chat" : "responses",
+    supportsWebsockets: codexSupportsWebsockets,
+    requiresOpenAiAuth: boolFromEnv(process.env.CODEX_REQUIRES_OPENAI_AUTH, true),
+    disableResponseStorage: boolFromEnv(process.env.CODEX_DISABLE_RESPONSE_STORAGE, true),
+    networkAccess: stringFromEnv(process.env.CODEX_NETWORK_ACCESS, "enabled"),
+    features: {
+      goals: boolFromEnv(process.env.CODEX_FEATURE_GOALS ?? process.env.CODEX_GOALS, true),
+      responsesWebsocketsV2: boolFromEnv(process.env.CODEX_RESPONSES_WEBSOCKETS_V2, codexSupportsWebsockets)
+    }
   },
   search: {
     enabled: boolFromEnv(process.env.ENABLE_WEB_SEARCH, true),

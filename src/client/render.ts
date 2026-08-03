@@ -209,7 +209,9 @@ export const renderApp = (state: AppState): string => {
                   <div>
                     <strong>${state.user.hasOpenAiApiKey ? "更新 OpenAI API key" : "配置 OpenAI API key"}</strong>
                     <span>${
-                      state.requiresOpenAiApiKeyForText
+                      state.textRuntime === "codex" && state.requiresOpenAiApiKeyForText
+                        ? "Codex 文本模式会按服务器的 provider 配置使用该密钥；可填官方或兼容代理对应的 key。"
+                        : state.requiresOpenAiApiKeyForText
                         ? "文本对话、图片和上传能力会使用该密钥。"
                         : "Codex 文本模式下可选；生成图片或分析图片/PDF/文件时仍会使用。"
                     }密钥只保存在服务器根目录 a.json。</span>
