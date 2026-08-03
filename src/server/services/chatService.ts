@@ -99,6 +99,28 @@ const toApiMessages = (messages: ChatMessage[]) => {
   ];
 };
 
+const codexSystemAddendum = [
+  "Codex runtime guidance:",
+  "- For current, time-sensitive, or source-dependent questions, use available network access to inspect authoritative primary sources directly before answering.",
+  "- Do not treat search snippets or page metadata as complete evidence when the user asks for complete results, tables, prices, laws, schedules, or other detailed facts.",
+  "- If an official source is dynamic, continue by fetching structured page data, linked report pages, public APIs, or other authoritative pages that contain the actual data.",
+  "- Answer with the best complete result you can verify, include source links, and clearly separate verified facts from uncertainty."
+].join("\n");
+
+const toCodexMessages = (messages: ChatMessage[]) => {
+  const apiMessages = toApiMessages(messages).map((message) => ({
+    role: message.role,
+    content: message.content
+  }));
+  const systemMessage = apiMessages.find((message) => message.role === "system");
+
+  if (systemMessage) {
+    systemMessage.content = `${systemMessage.content}\n\n${codexSystemAddendum}`;
+  }
+
+  return apiMessages;
+};
+
 const createAssistantMessage = (
   content: string,
   attachments: ChatMessage["attachments"] = []
@@ -157,6 +179,9 @@ const shouldUseCodexTextRuntime = (messages: ChatMessage[]): boolean =>
   appConfig.ai.textRuntime === "codex" &&
   !messages.some((message) => message.attachments?.some((attachment) => attachment.source === "uploaded"));
 
+const shouldUseCodexNetwork = (): boolean =>
+  ["1", "true", "yes", "on", "enabled"].includes(appConfig.codex.networkAccess.trim().toLowerCase());
+
 const shouldTryHostedWebSearch = (shouldSearch: boolean): boolean =>
   shouldSearch && appConfig.openai.textApi === "responses" && appConfig.search.openaiHostedTool;
 
@@ -185,17 +210,12 @@ const createTextCompletionWithSearchFallback = async (
       throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用你的 key。");
     }
 
-    return createCodexCompletion(
-      toApiMessages(await messagesWithWebSearchContext(messages)).map((message) => ({
-        role: message.role,
-        content: message.content
-      })),
-      model,
-      {
-        apiKey: options.apiKey,
-        userId: options.user.uid
-      }
-    );
+    const codexMessages = shouldUseCodexNetwork() ? messages : await messagesWithWebSearchContext(messages);
+
+    return createCodexCompletion(toCodexMessages(codexMessages), model, {
+      apiKey: options.apiKey,
+      userId: options.user.uid
+    });
   }
 
   if (!options.apiKey) {

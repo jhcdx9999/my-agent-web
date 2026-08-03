@@ -54,6 +54,9 @@ const normalizeReasoning = (value: string): string =>
 const tomlString = (value: string): string =>
   JSON.stringify(value);
 
+const isCodexNetworkEnabled = (): boolean =>
+  ["1", "true", "yes", "on", "enabled"].includes(appConfig.codex.networkAccess.trim().toLowerCase());
+
 const buildCodexConfigToml = (): string => {
   const lines = [
     `model_provider = ${tomlString(appConfig.codex.modelProvider)}`,
@@ -294,6 +297,7 @@ class CodexAppServerClient {
   private async startTurn(turn: ActiveTurn, prompt: string, model: string): Promise<void> {
     const cwd = appConfig.codex.workingDirectory;
     const normalizedModel = model || appConfig.codex.defaultModel;
+    const networkAccess = isCodexNetworkEnabled();
     const threadResult = await this.request("thread/start", {
       cwd,
       runtimeWorkspaceRoots: [cwd],
@@ -327,11 +331,11 @@ class CodexAppServerClient {
           ? {
               type: "workspaceWrite",
               writableRoots: [cwd],
-              networkAccess: false,
+              networkAccess,
               excludeTmpdirEnvVar: false,
               excludeSlashTmp: false
             }
-          : { type: "readOnly", networkAccess: false },
+          : { type: "readOnly", networkAccess },
       model: normalizedModel,
       effort: normalizeReasoning(appConfig.codex.reasoningEffort)
     });
