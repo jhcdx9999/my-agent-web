@@ -118,7 +118,7 @@ export const appConfig = {
       ? configuredCodexModels
       : [process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.5", ...configuredCodexModels],
     reasoningEffort: codexReasoningEffort,
-    timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 180000),
+    timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 300000),
     workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),
     sandbox: process.env.CODEX_SANDBOX === "workspace-write" ? "workspace-write" : "read-only",
     approvalPolicy: process.env.CODEX_APPROVAL_POLICY ?? "on-request",

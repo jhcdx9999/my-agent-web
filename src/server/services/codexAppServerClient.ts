@@ -200,6 +200,11 @@ const codexNotificationErrorMessage = (params: Record<string, unknown>): string 
   return stringifyCompact(params) ?? "Codex app-server error.";
 };
 
+const isTransientCodexStatus = (message: string): boolean =>
+  /^reconnecting(?:\.\.\.)?\s+\d+\/\d+$/i.test(message.trim()) ||
+  /^retrying(?:\.\.\.)?\s+\d+\/\d+$/i.test(message.trim()) ||
+  /^connection lost/i.test(message.trim());
+
 class CodexAppServerClient {
   private child: ChildProcess | null = null;
   private stdoutBuffer = "";
@@ -546,7 +551,14 @@ class CodexAppServerClient {
         break;
       }
       case "error":
-        this.finishTurnWithError(turn, new Error(codexNotificationErrorMessage(params)));
+        {
+          const message = codexNotificationErrorMessage(params);
+          if (isTransientCodexStatus(message)) {
+            console.warn(`[codex-app-server] transient status: ${message}`);
+            break;
+          }
+          this.finishTurnWithError(turn, new Error(message));
+        }
         break;
       default:
         break;
