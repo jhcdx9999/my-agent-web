@@ -47,10 +47,11 @@ CODEX_AUTH_MODE=user-api-key
 CODEX_CONFIG_TEMPLATE=
 CODEX_MODEL_PROVIDER=OpenAI
 CODEX_PROVIDER_BASE_URL=https://api.openai.com/v1
+CODEX_API_KEY_ENV=OPENAI_API_KEY
 CODEX_WIRE_API=responses
 CODEX_SUPPORTS_WEBSOCKETS=false
 CODEX_RESPONSES_WEBSOCKETS_V2=false
-CODEX_REQUIRES_OPENAI_AUTH=true
+CODEX_REQUIRES_OPENAI_AUTH=false
 CODEX_DISABLE_RESPONSE_STORAGE=true
 CODEX_NETWORK_ACCESS=enabled
 CODEX_FEATURE_GOALS=true
@@ -84,10 +85,11 @@ TAVILY_API_KEY=
 ```
 
 OpenAI API key 不再配置在 `.env` 中，而是按用户保存在根目录 `a.json`。如果 `a.json` 中没有某个用户的 `openaiApiKey`，该用户登录后页面会要求输入；用户可重复输入并覆盖旧 key。
+每个用户都会有独立 `uid`，格式是 `u` 加 6 位随机数字，例如 `u123456`。后端会确保它不和 `a.json`、`storage/auth/users.json` 中已有 uid 重复，并优先按 uid 检索该用户的账号、密码信息和 `openaiApiKey`。
 
 `AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`，适合官方 OpenAI 或 OpenAI-compatible 第三方代理。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，网页模型下拉会显示 `CODEX_MODELS`。Codex 模式下的 provider 由 `CODEX_PROVIDER_BASE_URL`、`CODEX_WIRE_API`、`CODEX_SUPPORTS_WEBSOCKETS` 等变量生成到每个用户自己的 `storage/users/<user>/codex-home/config.toml`；如果设置了 `CODEX_CONFIG_TEMPLATE`，则直接复制该模板文件。
 
-默认 `CODEX_AUTH_MODE=user-api-key`：每个网页登录用户都必须在页面配置自己的 API key；后端会为不同用户启动独立 Codex app-server 子进程，并把该用户的 key 注入为 `OPENAI_API_KEY`，同时使用独立 `storage/users/<user>/codex-home`，避免多用户共享服务器统一登录态。这个 key 需要和 `CODEX_PROVIDER_BASE_URL` 指向的服务匹配：官方 OpenAI base URL 用官方 key，第三方 Codex-compatible 中转站 base URL 用该中转站的 key。生成图片、上传图片/PDF/文件也会继续使用该用户自己的 OpenAI API key。
+默认 `CODEX_AUTH_MODE=user-api-key`：每个网页登录用户都必须在页面配置自己的 API key；后端会为不同用户启动独立 Codex app-server 子进程，并把该用户的 key 注入为 `OPENAI_API_KEY`，同时在用户专属 `config.toml` 中写入 `env_key = "OPENAI_API_KEY"` 和 `requires_openai_auth = false`，避免 Codex 去查找服务器登录态。这个 key 需要和 `CODEX_PROVIDER_BASE_URL` 指向的服务匹配：官方 OpenAI base URL 用官方 key，第三方 Codex-compatible 中转站 base URL 用该中转站的 key。生成图片、上传图片/PDF/文件也会继续使用该用户自己的 OpenAI API key。
 
 如果你确实想让所有用户共用服务器上的 `codex login` 状态，可以改成 `CODEX_AUTH_MODE=server-login`。这种模式运维简单，但不适合按用户分账或隔离。
 
@@ -106,10 +108,11 @@ CODEX_COMMAND=codex
 CODEX_AUTH_MODE=user-api-key
 CODEX_MODEL_PROVIDER=OpenAI
 CODEX_PROVIDER_BASE_URL=https://www.ai-dingyue.com
+CODEX_API_KEY_ENV=OPENAI_API_KEY
 CODEX_WIRE_API=responses
 CODEX_SUPPORTS_WEBSOCKETS=true
 CODEX_RESPONSES_WEBSOCKETS_V2=true
-CODEX_REQUIRES_OPENAI_AUTH=true
+CODEX_REQUIRES_OPENAI_AUTH=false
 CODEX_DEFAULT_MODEL=gpt-5.5
 CODEX_REASONING_EFFORT=xhigh
 CODEX_SANDBOX=read-only
@@ -124,7 +127,19 @@ CODEX_APPROVAL_POLICY=on-request
 
 ## 登录模式
 
-`AUTH_MODE=free` 是默认模式，用户可以在网页自行注册和登录，账号信息保存在 `storage/auth/users.json`。
+`AUTH_MODE=free` 是默认模式，用户可以在网页自行注册和登录，账号信息保存在 `storage/auth/users.json`。该文件支持旧数组格式，也支持 uid-keyed map 格式；写回时会统一为 uid-keyed map，例如：
+
+```json
+{
+  "u123456": {
+    "id": "u123456",
+    "username": "alice",
+    "passwordHash": "...",
+    "salt": "...",
+    "createdAt": "2026-08-03T00:00:00.000Z"
+  }
+}
+```
 
 `AUTH_MODE=dominant` 是白名单模式，网页会隐藏注册入口，只有项目根目录 `a.json` 中配置的账号密码可以登录。`a.json` 已加入 `.gitignore`，不会被提交到 GitHub。可先复制示例文件：
 
@@ -132,35 +147,34 @@ CODEX_APPROVAL_POLICY=on-request
 cp a.example.json a.json
 ```
 
-`a.json` 支持数组格式：
+`a.json` 使用 uid-keyed map 格式：
 
 ```json
-[
-  {
+{
+  "u000001": {
     "username": "admin",
     "password": "your-strong-password",
     "openaiApiKey": ""
   }
-]
-```
-
-也支持对象格式：
-
-```json
-{
-  "users": [
-    {
-      "username": "admin",
-      "password": "your-strong-password",
-      "openaiApiKey": ""
-    }
-  ]
 }
 ```
 
-每个 dominant 账号仍会按用户隔离保存历史对话。默认用户目录由账号名稳定生成，例如 `storage/users/dominant_xxx/`；如果你想固定历史目录，也可以给账号显式设置 `"id"`，之后只要这个 `id` 不变，历史会话就会继续归入同一目录。
+旧数组格式或 `{ "users": [...] }` 对象格式仍可读取，但后端写回时会统一迁移为 uid-keyed map：
+
+```json
+{
+  "u000001": {
+    "username": "admin",
+    "password": "your-strong-password",
+    "openaiApiKey": ""
+  }
+}
+```
+
+每个 dominant 账号仍会按用户隔离保存历史对话。默认用户目录现在使用 `uid`，例如 `storage/users/u123456/`；如果旧账号没有 `uid`，后端会自动补一个不重复的 uid。
 
 `openaiApiKey` 可以为空。为空时，用户登录后在网页中输入自己的 key，后端会写回 `a.json`；再次输入会覆盖旧 key。
+`AUTH_MODE=free` 下用户自行注册时，后端也会生成唯一 uid，并把该用户的 `uid`、账号名、密码哈希、salt 和 `openaiApiKey` 记录/同步到 `a.json`。不会在 `a.json` 中保存 free 用户明文密码。`a.json` 和 `storage/auth/users.json` 中的 uid 共享同一个唯一命名空间，不能重复。
 
 ## Ubuntu 运行
 

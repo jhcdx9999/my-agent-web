@@ -52,10 +52,15 @@ const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "code
 const codexAuthMode = process.env.CODEX_AUTH_MODE === "server-login" ? "server-login" : "user-api-key";
 const codexModelProvider = stringFromEnv(process.env.CODEX_MODEL_PROVIDER, "OpenAI");
 const codexProviderBaseUrl = stringFromEnv(process.env.CODEX_PROVIDER_BASE_URL, openaiBaseUrl).replace(/\/$/, "");
+const codexApiKeyEnv = stringFromEnv(process.env.CODEX_API_KEY_ENV, "OPENAI_API_KEY");
 const codexSupportsWebsockets = boolFromEnv(
   process.env.CODEX_SUPPORTS_WEBSOCKETS,
   boolFromEnv(process.env.CODEX_RESPONSES_WEBSOCKETS_V2, false)
 );
+const codexRequiresOpenAiAuth =
+  codexAuthMode === "user-api-key"
+    ? false
+    : boolFromEnv(process.env.CODEX_REQUIRES_OPENAI_AUTH, true);
 const reasoningEffort = ["minimal", "low", "medium", "high", "xhigh"].includes(process.env.OPENAI_REASONING_EFFORT ?? "")
   ? process.env.OPENAI_REASONING_EFFORT!
   : "xhigh";
@@ -126,9 +131,10 @@ export const appConfig = {
     configTemplate: pathFromEnv(process.env.CODEX_CONFIG_TEMPLATE),
     modelProvider: codexModelProvider,
     providerBaseUrl: codexProviderBaseUrl,
+    apiKeyEnv: codexApiKeyEnv,
     wireApi: process.env.CODEX_WIRE_API === "chat" ? "chat" : "responses",
     supportsWebsockets: codexSupportsWebsockets,
-    requiresOpenAiAuth: boolFromEnv(process.env.CODEX_REQUIRES_OPENAI_AUTH, true),
+    requiresOpenAiAuth: codexRequiresOpenAiAuth,
     disableResponseStorage: boolFromEnv(process.env.CODEX_DISABLE_RESPONSE_STORAGE, true),
     networkAccess: stringFromEnv(process.env.CODEX_NETWORK_ACCESS, "enabled"),
     features: {

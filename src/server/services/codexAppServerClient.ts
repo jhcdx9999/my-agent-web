@@ -71,6 +71,10 @@ const buildCodexConfigToml = (): string => {
     `requires_openai_auth = ${appConfig.codex.requiresOpenAiAuth}`
   ];
 
+  if (appConfig.codex.authMode === "user-api-key") {
+    lines.push(`env_key = ${tomlString(appConfig.codex.apiKeyEnv)}`);
+  }
+
   if (appConfig.codex.supportsWebsockets) {
     lines.push("supports_websockets = true");
   }
@@ -219,6 +223,16 @@ class CodexAppServerClient {
     private readonly apiKey: string
   ) {}
 
+  stop(): void {
+    this.rejectPendingRequests(new Error("Codex app-server client stopped."));
+    this.finishTurnWithError(this.activeTurn, new Error("Codex app-server client stopped."));
+
+    if (this.child && !this.child.killed) {
+      this.child.kill();
+    }
+    this.child = null;
+  }
+
   async complete(messages: ChatApiMessage[], model: string): Promise<CodexCompletion> {
     try {
       await this.ensureStarted();
@@ -345,7 +359,13 @@ class CodexAppServerClient {
       : "";
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      ...(appConfig.codex.authMode === "user-api-key" ? { OPENAI_API_KEY: this.apiKey, CODEX_HOME: codexHome } : {})
+      ...(appConfig.codex.authMode === "user-api-key"
+        ? {
+            OPENAI_API_KEY: this.apiKey,
+            [appConfig.codex.apiKeyEnv]: this.apiKey,
+            CODEX_HOME: codexHome
+          }
+        : {})
     };
 
     this.child = spawn(appConfig.codex.command, ["app-server", "--listen", "stdio://"], {
@@ -608,19 +628,29 @@ class CodexAppServerClient {
 }
 
 const clients = new Map<string, CodexAppServerClient>();
+const activeClientKeyByUser = new Map<string, string>();
 
 const keyFingerprint = (apiKey: string): string =>
   apiKey ? crypto.createHash("sha256").update(apiKey).digest("hex").slice(0, 16) : "server-login";
 
 const clientFor = (userId: string, apiKey: string): CodexAppServerClient => {
-  const key = `${userId}:${keyFingerprint(apiKey)}`;
+  const fingerprint = keyFingerprint(apiKey);
+  const key = `${userId}:${fingerprint}`;
   const existing = clients.get(key);
   if (existing) {
     return existing;
   }
 
+  const previousKey = activeClientKeyByUser.get(userId);
+  if (previousKey && previousKey !== key) {
+    clients.get(previousKey)?.stop();
+    clients.delete(previousKey);
+  }
+
   const client = new CodexAppServerClient(userId, apiKey);
   clients.set(key, client);
+  activeClientKeyByUser.set(userId, key);
+  console.info(`[codex-app-server] starting client for user=${userId} key=${fingerprint}`);
   return client;
 };
 

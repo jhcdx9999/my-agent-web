@@ -70,6 +70,7 @@ export interface AppConfigResponse {
 
 export interface AuthUser {
   id: string;
+  uid: string;
   username: string;
   hasOpenAiApiKey: boolean;
 }

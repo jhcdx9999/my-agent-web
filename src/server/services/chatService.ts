@@ -193,7 +193,7 @@ const createTextCompletionWithSearchFallback = async (
       model,
       {
         apiKey: options.apiKey,
-        userId: options.user.id
+        userId: options.user.uid
       }
     );
   }

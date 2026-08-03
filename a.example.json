@@ -1,7 +1,7 @@
-[
-  {
+{
+  "u000001": {
     "username": "admin",
     "password": "change-me-strong-password",
     "openaiApiKey": ""
   }
-]
+}

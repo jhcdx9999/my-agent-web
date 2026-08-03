@@ -21,7 +21,7 @@ const gunzip = promisify(zlib.gunzip);
 const indexFilename = "index.json";
 
 const conversationsDir = (user: AuthUser): string =>
-  path.join(userStorageDir(user.id), "conversations");
+  path.join(userStorageDir(user.uid), "conversations");
 
 const indexPath = (user: AuthUser): string => path.join(conversationsDir(user), indexFilename);
 

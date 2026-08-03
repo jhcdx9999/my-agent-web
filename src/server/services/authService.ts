@@ -5,16 +5,31 @@ import { appConfig } from "../config";
 import { HttpError } from "../errors";
 import { ensureDirectory, safeGeneratedPath } from "../utils/fs";
 import { createId } from "../utils/id";
-import { readDominantUserRecords, userHasOpenAiApiKey } from "./userConfigService";
+import {
+  collectConfiguredUserUids,
+  isValidUserUid,
+  normalizedUserUid,
+  readDominantUserRecords,
+  upsertRegisteredUserConfig,
+  userHasOpenAiApiKey
+} from "./userConfigService";
 import type { AuthRequest, AuthResponse, AuthUser } from "../../shared/types";
 
 type StoredUser = {
   id: string;
+  uid: string;
   username: string;
   passwordHash: string;
   salt: string;
   createdAt: string;
 };
+
+type StoredUsersFile =
+  | StoredUser[]
+  | Record<string, Omit<StoredUser, "uid"> & { uid?: string }>
+  | {
+      users: StoredUser[] | Record<string, Omit<StoredUser, "uid"> & { uid?: string }>;
+    };
 
 type SessionRecord = {
   tokenHash: string;
@@ -101,6 +116,20 @@ const readJsonFile = async <T>(filePath: string, fallback: T): Promise<T> => {
   }
 };
 
+const randomUid = (): string => `u${crypto.randomInt(0, 1_000_000).toString().padStart(6, "0")}`;
+
+const allocateUid = (used: Set<string>): string => {
+  for (let attempt = 0; attempt < 1_000_000; attempt += 1) {
+    const uid = randomUid();
+    if (!used.has(uid)) {
+      used.add(uid);
+      return uid;
+    }
+  }
+
+  throw new HttpError(500, "无法生成唯一用户 uid，请稍后重试。");
+};
+
 const readDominantUsers = async (): Promise<StoredUser[]> => {
   const entries = await readDominantUserRecords({ requireFile: true });
 
@@ -113,8 +142,15 @@ const readDominantUsers = async (): Promise<StoredUser[]> => {
         return undefined;
       }
 
+      const uid = isValidUserUid(entry.uid) ? entry.uid : undefined;
+      const id = entry.id?.trim() || stableDominantUserId(username);
+      if (!uid) {
+        return undefined;
+      }
+
       return {
-        id: entry.id?.trim() || stableDominantUserId(username),
+        id,
+        uid,
         username,
         passwordHash: password,
         salt: "",
@@ -129,9 +165,81 @@ const writeJsonFile = async <T>(filePath: string, value: T): Promise<void> => {
   await fs.writeFile(filePath, JSON.stringify(value));
 };
 
-const readUsers = (): Promise<StoredUser[]> => readJsonFile(usersFile, []);
+const usersFromMap = (record: Record<string, Omit<StoredUser, "uid"> & { uid?: string }>): StoredUser[] =>
+  Object.entries(record).map(([uid, user]) => ({
+    ...user,
+    uid: normalizedUserUid(user.uid) ?? normalizedUserUid(uid) ?? user.uid ?? uid
+  }));
 
-const writeUsers = (users: StoredUser[]): Promise<void> => writeJsonFile(usersFile, users);
+const hasUsersProperty = (
+  value: Exclude<StoredUsersFile, StoredUser[]>
+): value is { users: StoredUser[] | Record<string, Omit<StoredUser, "uid"> & { uid?: string }> } =>
+  Object.prototype.hasOwnProperty.call(value, "users");
+
+const normalizeUsersFile = (value: StoredUsersFile): StoredUser[] => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (hasUsersProperty(value)) {
+    return Array.isArray(value.users) ? value.users : usersFromMap(value.users);
+  }
+
+  return usersFromMap(value);
+};
+
+const readUsers = async (): Promise<StoredUser[]> =>
+  normalizeUsersFile(await readJsonFile<StoredUsersFile>(usersFile, {}));
+
+const writeUsers = (users: StoredUser[]): Promise<void> => {
+  const value = Object.fromEntries(
+    users.map((user) => {
+      const { uid, ...rest } = user;
+      return [uid, rest];
+    })
+  );
+  return writeJsonFile(usersFile, value);
+};
+
+const migrateStoredUsers = async (users: StoredUser[]): Promise<StoredUser[]> => {
+  let changed = false;
+  const used = await collectConfiguredUserUids();
+  const migrated: StoredUser[] = [];
+
+  for (const user of users) {
+    const existingUid = normalizedUserUid(user.uid);
+    if (existingUid && !migrated.some((item) => item.uid === existingUid)) {
+      used.add(existingUid);
+      if (user.uid !== existingUid || user.id !== existingUid) {
+        changed = true;
+      }
+      migrated.push({
+        ...user,
+        id: existingUid,
+        uid: existingUid
+      });
+      continue;
+    }
+
+    const uid = allocateUid(used);
+    migrated.push({
+      ...user,
+      id: uid,
+      uid
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    await writeUsers(migrated);
+  } else {
+    await writeUsers(migrated);
+  }
+
+  await Promise.all(migrated.map((user) => upsertRegisteredUserConfig(user)));
+
+  return migrated;
+};
 
 const readSessions = async (): Promise<SessionRecord[]> => {
   const sessions = await readJsonFile<SessionRecord[]>(sessionsFile, []);
@@ -142,17 +250,19 @@ const readSessions = async (): Promise<SessionRecord[]> => {
 const writeSessions = (sessions: SessionRecord[]): Promise<void> =>
   writeJsonFile(sessionsFile, sessions);
 
-const toAuthUser = async (user: Pick<AuthUser, "id" | "username">): Promise<AuthUser> => ({
+const toAuthUser = async (user: Pick<AuthUser, "id" | "uid" | "username">): Promise<AuthUser> => ({
   id: user.id,
+  uid: user.uid,
   username: user.username,
   hasOpenAiApiKey: await userHasOpenAiApiKey({
     id: user.id,
+    uid: user.uid,
     username: user.username,
     hasOpenAiApiKey: false
   })
 });
 
-const issueToken = async (rawUser: Pick<AuthUser, "id" | "username">): Promise<AuthResponse> => {
+const issueToken = async (rawUser: Pick<AuthUser, "id" | "uid" | "username">): Promise<AuthResponse> => {
   const user = await toAuthUser(rawUser);
   const token = createId("session");
   const expiresAt = new Date(Date.now() + appConfig.tokenTtlMs).toISOString();
@@ -179,7 +289,23 @@ const resolveAuthorizedSessionUser = async (session: SessionRecord): Promise<Aut
   }
 
   if (appConfig.auth.mode !== "dominant") {
-    return toAuthUser(session.user);
+    const users = await migrateStoredUsers(await readUsers());
+    const matchedUser = users.find(
+      (user) =>
+        (isValidUserUid(session.user.uid) && user.uid === session.user.uid) ||
+        user.id === session.user.id ||
+        user.username === session.user.username
+    );
+
+    if (!matchedUser) {
+      throw new HttpError(401, "账号授权已变更，请重新登录。");
+    }
+
+    return toAuthUser({
+      id: matchedUser.id,
+      uid: matchedUser.uid,
+      username: matchedUser.username
+    });
   }
 
   if (session.authMode !== "dominant") {
@@ -195,6 +321,7 @@ const resolveAuthorizedSessionUser = async (session: SessionRecord): Promise<Aut
 
   return toAuthUser({
     id: matchedUser.id,
+    uid: matchedUser.uid,
     username: matchedUser.username
   });
 };
@@ -205,15 +332,21 @@ export const registerUser = async (request: AuthRequest): Promise<AuthResponse> 
   }
 
   const { username, password } = validateAuthRequest(request);
-  const users = await readUsers();
+  const users = await migrateStoredUsers(await readUsers());
 
   if (users.some((user) => user.username === username)) {
     throw new HttpError(409, "账号已注册，请直接登录。");
   }
 
+  const used = await collectConfiguredUserUids();
+  for (const user of users) {
+    used.add(user.uid);
+  }
+  const uid = allocateUid(used);
   const salt = crypto.randomBytes(16).toString("hex");
   const user: StoredUser = {
-    id: createId("user"),
+    id: uid,
+    uid,
     username,
     salt,
     passwordHash: await scrypt(password, salt),
@@ -221,9 +354,11 @@ export const registerUser = async (request: AuthRequest): Promise<AuthResponse> 
   };
   users.push(user);
   await writeUsers(users);
+  await upsertRegisteredUserConfig(user);
 
   return issueToken({
     id: user.id,
+    uid: user.uid,
     username: user.username
   });
 };
@@ -232,7 +367,7 @@ export const loginUser = async (request: AuthRequest): Promise<AuthResponse> => 
   const { username, password } = validateAuthRequest(request, {
     enforceFreeRules: appConfig.auth.mode !== "dominant"
   });
-  const users = appConfig.auth.mode === "dominant" ? await readDominantUsers() : await readUsers();
+  const users = appConfig.auth.mode === "dominant" ? await readDominantUsers() : await migrateStoredUsers(await readUsers());
   const existing = users.find((user) => user.username === username);
 
   if (!existing) {
@@ -253,6 +388,7 @@ export const loginUser = async (request: AuthRequest): Promise<AuthResponse> => 
 
   return issueToken({
     id: existing.id,
+    uid: existing.uid,
     username: existing.username
   });
 };
