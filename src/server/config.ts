@@ -74,6 +74,7 @@ export const appConfig = {
     fetchPages: boolFromEnv(process.env.WEB_SEARCH_FETCH_PAGES, true),
     maxFetchPages: intFromEnv(process.env.WEB_SEARCH_MAX_FETCH_PAGES, 2),
     maxPageChars: intFromEnv(process.env.WEB_SEARCH_MAX_PAGE_CHARS, 2500),
+    maxContextChars: intFromEnv(process.env.WEB_SEARCH_MAX_CONTEXT_CHARS, 8000),
     userAgent: process.env.WEB_SEARCH_USER_AGENT ?? "CustomGPTWeb/0.1",
     serperApiKey: process.env.SERPER_API_KEY ?? "",
     braveApiKey: process.env.BRAVE_SEARCH_API_KEY ?? "",

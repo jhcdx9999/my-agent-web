@@ -314,5 +314,8 @@ export const formatSearchContext = (query: string, results: WebSearchResult[]): 
     )
     .join("\n\n");
 
-  return `你已获得以下联网搜索结果。当前时间：${now}。请基于这些来源回答，并在答案中列出来源链接；如果来源不足以确认，不要编造。\n查询：${query}\n\n${items}`;
+  return `你已获得以下联网搜索结果。当前时间：${now}。请基于这些来源回答，并在答案中列出来源链接；如果来源不足以确认，不要编造。\n查询：${query}\n\n${items}`.slice(
+    0,
+    appConfig.search.maxContextChars
+  );
 };

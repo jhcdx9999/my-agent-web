@@ -10,7 +10,14 @@ import type {
 } from "../shared/types";
 
 const parseJson = async <T>(response: Response): Promise<T> => {
-  const data = (await response.json()) as T & { error?: string };
+  let data: T & { error?: string };
+
+  try {
+    data = (await response.json()) as T & { error?: string };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`响应读取失败：${message}。如果服务器刚更新，请刷新页面后重试。`);
+  }
 
   if (!response.ok) {
     throw new Error(data.error ?? `Request failed with ${response.status}.`);

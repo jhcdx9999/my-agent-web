@@ -23,6 +23,14 @@ type AuthedRequest = express.Request & {
   user?: AuthUser;
 };
 
+const sendJson = (response: express.Response, value: unknown, statusCode = 200): void => {
+  response.status(statusCode);
+  response.removeHeader("Content-Length");
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store");
+  response.end(JSON.stringify(value));
+};
+
 const tokenFromRequest = (request: express.Request): string | undefined => {
   const header = request.header("Authorization");
   if (!header) {
@@ -159,7 +167,7 @@ export const createRouter = (): express.Router => {
       }, user);
       const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
 
-      response.json({
+      sendJson(response, {
         ...chatResponse,
         conversation
       });
