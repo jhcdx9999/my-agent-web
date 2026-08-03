@@ -146,15 +146,63 @@ const withWebSearchContext = async (prompt: string): Promise<string> => {
     return prompt;
   }
 
-  if (appConfig.openai.textApi === "responses" && appConfig.search.openaiHostedTool) {
-    return prompt;
-  }
-
   const results = await searchWeb(prompt);
   return `${formatSearchContext(prompt, results)}\n\n用户原始问题：\n${prompt}`;
 };
 
 const needsWebSearch = (prompt: string): boolean => shouldUseWebSearch(prompt);
+
+const shouldTryHostedWebSearch = (shouldSearch: boolean): boolean =>
+  shouldSearch && appConfig.openai.textApi === "responses" && appConfig.search.openaiHostedTool;
+
+const isHostedWebSearchFailure = (error: unknown): boolean => {
+  if (!(error instanceof HttpError)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    error.statusCode >= 500 &&
+    (message.includes("upstream request failed") ||
+      message.includes("web_search") ||
+      message.includes("tool") ||
+      message.includes("non-json response"))
+  );
+};
+
+const createTextCompletionWithSearchFallback = async (
+  messages: ChatMessage[],
+  model: string,
+  options: { apiKey: string; shouldSearch: boolean }
+) => {
+  if (!options.shouldSearch) {
+    return createTextCompletion(toApiMessages(messages), model, { apiKey: options.apiKey, webSearch: false });
+  }
+
+  if (shouldTryHostedWebSearch(true)) {
+    try {
+      return await createTextCompletion(toApiMessages(messages), model, {
+        apiKey: options.apiKey,
+        webSearch: true
+      });
+    } catch (error) {
+      if (!isHostedWebSearchFailure(error)) {
+        throw error;
+      }
+
+      console.warn(
+        `Hosted web_search failed; retrying with local search context: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  return createTextCompletion(toApiMessages(await messagesWithWebSearchContext(messages)), model, {
+    apiKey: options.apiKey,
+    webSearch: false
+  });
+};
 
 const messagesWithWebSearchContext = async (messages: ChatMessage[]): Promise<ChatMessage[]> => {
   const latest = messages[messages.length - 1];
@@ -220,13 +268,16 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
 
   if (intent === "file") {
     const shouldSearch = needsWebSearch(latestPrompt);
-    const latestPromptWithSearch = shouldSearch ? await withWebSearchContext(latestPrompt) : latestPrompt;
-    const completion = await createTextCompletion(toApiMessages([{
+    const fileMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
-      content: buildFilePrompt(latestPromptWithSearch),
+      content: buildFilePrompt(latestPrompt),
       createdAt: new Date().toISOString()
-    }]), model, { apiKey, webSearch: shouldSearch });
+    }];
+    const completion = await createTextCompletionWithSearchFallback(fileMessages, model, {
+      apiKey,
+      shouldSearch
+    });
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-document.md`,
       completion.content,
@@ -246,13 +297,16 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
 
   if (intent === "data") {
     const shouldSearch = needsWebSearch(latestPrompt);
-    const latestPromptWithSearch = shouldSearch ? await withWebSearchContext(latestPrompt) : latestPrompt;
-    const codeCompletion = await createTextCompletion(toApiMessages([{
+    const dataMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
-      content: buildDataPlanPrompt(latestPromptWithSearch),
+      content: buildDataPlanPrompt(latestPrompt),
       createdAt: new Date().toISOString()
-    }]), model, { apiKey, webSearch: shouldSearch });
+    }];
+    const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, model, {
+      apiKey,
+      shouldSearch
+    });
     const code = stripMarkdownFence(codeCompletion.content);
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
@@ -279,11 +333,10 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   }
 
   const shouldSearch = needsWebSearch(latestPrompt);
-  const completion = await createTextCompletion(
-    toApiMessages(shouldSearch ? await messagesWithWebSearchContext(normalizedMessages) : normalizedMessages),
-    model,
-    { apiKey, webSearch: shouldSearch }
-  );
+  const completion = await createTextCompletionWithSearchFallback(normalizedMessages, model, {
+    apiKey,
+    shouldSearch
+  });
 
   return {
     intent,

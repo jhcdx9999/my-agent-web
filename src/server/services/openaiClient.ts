@@ -118,7 +118,7 @@ const parseResponseJson = async <T>(response: Response): Promise<T> => {
 
 const formatOpenAiErrorMessage = (message: string): string =>
   /upstream request failed/i.test(message)
-    ? `${message}。如果这是上传图片、PDF 或文件时出现，请确认 OPENAI_BASE_URL 对应的服务和当前模型支持 Responses API 的 input_image/input_file。`
+    ? `${message}。如果这是联网搜索、上传图片、PDF 或文件时出现，请确认 OPENAI_BASE_URL 对应的服务和当前模型支持 Responses API 的 web_search/input_image/input_file。`
     : message;
 
 const parseNonJsonOpenAiError = (text: string): string => {
