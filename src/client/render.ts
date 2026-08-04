@@ -1,4 +1,5 @@
 import type { AppState } from "./state";
+import { renderMarkdown } from "./markdown";
 import type { ChatAttachment, ChatMessage, ConversationSummary, ThemeName } from "../shared/types";
 
 const formatTime = (iso: string): string =>
@@ -122,7 +123,11 @@ const renderMessage = (message: ChatMessage, state: AppState): string => {
                   <button class="message-action-button" type="button" data-cancel-edit>取消</button>
                 </div>
               </form>`
-            : `<p>${escapeHtml(message.content).replaceAll("\n", "<br />")}</p>
+            : `<div class="message-markdown">${
+                message.role === "assistant"
+                  ? renderMarkdown(message.content)
+                  : `<p>${escapeHtml(message.content).replaceAll("\n", "<br />")}</p>`
+              }</div>
               ${attachments ? `<div class="attachments">${attachments}</div>` : ""}`
         }
       </div>

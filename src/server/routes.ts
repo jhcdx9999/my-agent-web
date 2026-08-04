@@ -20,7 +20,7 @@ import {
   renameConversation,
   saveConversation
 } from "./services/historyService";
-import type { AuthUser, ChatRequest } from "../shared/types";
+import type { AuthUser, ChatProgressEvent, ChatRequest } from "../shared/types";
 
 type AuthedRequest = express.Request & {
   user?: AuthUser;
@@ -32,6 +32,26 @@ const sendJson = (response: express.Response, value: unknown, statusCode = 200):
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "no-store");
   response.end(JSON.stringify(value));
+};
+
+const sendSse = (response: express.Response, event: string, value: unknown): void => {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(value)}\n\n`);
+};
+
+const chatRequestFromBody = (body: Partial<ChatRequest>): ChatRequest => {
+  if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+    throw new HttpError(400, "messages is required.");
+  }
+
+  return {
+    messages: body.messages,
+    model: body.model ?? (appConfig.ai.textRuntime === "codex"
+      ? appConfig.codex.defaultModel
+      : appConfig.openai.defaultModel),
+    conversationId: body.conversationId || createId("conv"),
+    paused: body.paused
+  };
 };
 
 const tokenFromRequest = (request: express.Request): string | undefined => {
@@ -195,21 +215,9 @@ export const createRouter = (): express.Router => {
   router.post("/chat", async (request, response, next) => {
     try {
       const user = await authenticateToken(tokenFromRequest(request));
-      const body = request.body as Partial<ChatRequest>;
-      if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
-        throw new HttpError(400, "messages is required.");
-      }
-
-      const conversationId = body.conversationId || createId("conv");
-      const chatResponse = await processChat({
-          messages: body.messages,
-          model: body.model ?? (appConfig.ai.textRuntime === "codex"
-            ? appConfig.codex.defaultModel
-            : appConfig.openai.defaultModel),
-          conversationId,
-          paused: body.paused
-      }, user);
-      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], conversationId);
+      const body = chatRequestFromBody(request.body as Partial<ChatRequest>);
+      const chatResponse = await processChat(body, user);
+      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
 
       sendJson(response, {
         ...chatResponse,
@@ -217,6 +225,54 @@ export const createRouter = (): express.Router => {
       });
     } catch (error) {
       next(error);
+    }
+  });
+
+  router.post("/chat/stream", async (request, response) => {
+    response.status(200);
+    response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    response.setHeader("Cache-Control", "no-store, no-transform");
+    response.setHeader("Connection", "keep-alive");
+    response.setHeader("X-Accel-Buffering", "no");
+    response.flushHeaders?.();
+    response.write(": connected\n\n");
+
+    try {
+      const user = await authenticateToken(tokenFromRequest(request));
+      const body = chatRequestFromBody(request.body as Partial<ChatRequest>);
+      const progress = (event: ChatProgressEvent): void => {
+        sendSse(response, "progress", event);
+      };
+
+      progress({
+        title: "正在准备请求",
+        detail: "服务器已收到消息，正在建立本轮处理任务。",
+        kind: "thinking",
+        createdAt: new Date().toISOString()
+      });
+
+      const chatResponse = await processChat(body, user, progress);
+      progress({
+        title: "正在保存会话",
+        detail: "回复已生成，正在写入当前用户的历史记录。",
+        kind: "done",
+        createdAt: new Date().toISOString()
+      });
+      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
+
+      sendSse(response, "done", {
+        ...chatResponse,
+        conversation
+      });
+      response.end();
+    } catch (error) {
+      const statusCode = error instanceof HttpError ? error.statusCode : 500;
+      sendSse(response, "error", {
+        error: getErrorMessage(error),
+        statusCode,
+        details: error instanceof HttpError ? error.details : undefined
+      });
+      response.end();
     }
   });
 

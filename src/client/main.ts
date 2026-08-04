@@ -14,13 +14,14 @@ import {
   register,
   saveOpenAiApiKey,
   sendChat,
+  sendChatStream,
   setAuthToken
 } from "./api";
 import { applyTheme, readStoredTheme } from "./theme";
 import { createInitialState, createUserMessage, type AppState } from "./state";
 import { renderApp } from "./render";
 import { createClientId } from "./id";
-import type { AuthResponse, AuthUser, ChatAttachment, ChatMessage, ConversationSummary } from "../shared/types";
+import type { AuthResponse, AuthUser, ChatAttachment, ChatMessage, ChatProgressEvent, ConversationSummary } from "../shared/types";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 const storedUser = localStorage.getItem("custom-gpt-user");
@@ -42,7 +43,6 @@ let state: AppState = {
   theme: readStoredTheme()
 };
 
-let waitingTimer: number | undefined;
 let activeRequestId = 0;
 
 const draw = (scrollToBottom = true): void => {
@@ -404,34 +404,15 @@ const waitingStagesFor = (prompt: string, messages: ChatMessage[]): Array<{ titl
   return stages;
 };
 
-const stopWaitingCycle = (): void => {
-  if (waitingTimer !== undefined) {
-    window.clearInterval(waitingTimer);
-    waitingTimer = undefined;
-  }
-};
-
-const startWaitingCycle = (stages: Array<{ title: string; detail: string }>): void => {
-  stopWaitingCycle();
-  let index = 0;
-
-  waitingTimer = window.setInterval(() => {
-    if (!state.pending) {
-      stopWaitingCycle();
-      return;
-    }
-
-    index = (index + 1) % stages.length;
-    const stage = stages[index];
-    updateState(
-      {
-        waitingTitle: stage.title,
-        waitingDetail: stage.detail,
-        statusText: stage.title
-      },
-      { scroll: true }
-    );
-  }, 2600);
+const applyProgressEvent = (event: ChatProgressEvent): void => {
+  updateState(
+    {
+      waitingTitle: event.title,
+      waitingDetail: event.detail,
+      statusText: event.title
+    },
+    { scroll: true }
+  );
 };
 
 const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
@@ -464,21 +445,33 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
     waitingDetail: firstStage.detail,
     statusText: firstStage.title
   });
-  startWaitingCycle(stages);
 
   try {
-    const response = await sendChat({
+    const payload = {
       messages: nextMessages,
       model: state.selectedModel,
       conversationId: state.activeConversationId,
       paused: false
+    };
+    const response = await sendChatStream(payload, {
+      onProgress: (event) => {
+        if (requestId === activeRequestId) {
+          applyProgressEvent(event);
+        }
+      }
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/stream|ReadableStream|text\/event-stream|流式/i.test(message)) {
+        return sendChat(payload);
+      }
+
+      throw error;
     });
 
     if (requestId !== activeRequestId) {
       return;
     }
 
-    stopWaitingCycle();
     updateState({
       messages: [...compactMessagesForState(nextMessages), response.message],
       activeConversationId: response.conversation?.id ?? state.activeConversationId,
@@ -493,7 +486,6 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
       return;
     }
 
-    stopWaitingCycle();
     const message = error instanceof Error ? error.message : String(error);
     updateState({
       messages: [
@@ -741,7 +733,6 @@ function bindEvents(): void {
 
   document.querySelector<HTMLButtonElement>("#logoutButton")?.addEventListener("click", async () => {
     activeRequestId += 1;
-    stopWaitingCycle();
     await logout().catch(() => undefined);
     forgetAuth();
     updateState({

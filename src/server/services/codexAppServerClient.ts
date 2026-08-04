@@ -30,9 +30,12 @@ type CodexCompletion = {
   };
 };
 
+type ProgressReporter = (title: string, detail: string, kind?: string) => void;
+
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  onProgress?: ProgressReporter;
 };
 
 type ActiveTurn = {
@@ -46,6 +49,7 @@ type ActiveTurn = {
   settled: boolean;
   resolve: (value: CodexCompletion) => void;
   reject: (error: Error) => void;
+  onProgress?: ProgressReporter;
 };
 
 const normalizeReasoning = (value: string): string =>
@@ -212,6 +216,22 @@ const isTransientCodexStatus = (message: string): boolean =>
   /^retrying(?:\.\.\.)?\s+\d+\/\d+$/i.test(message.trim()) ||
   /^connection lost/i.test(message.trim());
 
+const describeCodexItem = (record: Record<string, unknown>): string => {
+  const type = typeof record.type === "string" ? record.type : "tool";
+  const title = typeof record.title === "string" ? record.title : undefined;
+  const command = typeof record.command === "string" ? record.command : undefined;
+  const url = typeof record.url === "string" ? record.url : undefined;
+  const query = typeof record.query === "string" ? record.query : undefined;
+  const name = typeof record.name === "string" ? record.name : undefined;
+  const text = title ?? command ?? url ?? query ?? name;
+
+  if (text) {
+    return text.length > 160 ? `${text.slice(0, 160)}...` : text;
+  }
+
+  return `Codex 正在执行 ${type} 步骤。`;
+};
+
 class CodexAppServerClient {
   private child: ChildProcess | null = null;
   private stdoutBuffer = "";
@@ -236,7 +256,7 @@ class CodexAppServerClient {
     this.child = null;
   }
 
-  async complete(messages: ChatApiMessage[], model: string): Promise<CodexCompletion> {
+  async complete(messages: ChatApiMessage[], model: string, onProgress?: ProgressReporter): Promise<CodexCompletion> {
     try {
       await this.ensureStarted();
     } catch (error) {
@@ -251,7 +271,7 @@ class CodexAppServerClient {
       throw new HttpError(409, "Codex app-server 正在处理上一条消息，请稍后再试。");
     }
 
-    const turn = this.createTurn();
+    const turn = this.createTurn(onProgress);
     this.activeTurn = turn;
 
     const completion = new Promise<CodexCompletion>((resolve, reject) => {
@@ -266,7 +286,7 @@ class CodexAppServerClient {
     return completion;
   }
 
-  private createTurn(): ActiveTurn {
+  private createTurn(onProgress?: ProgressReporter): ActiveTurn {
     const timeout = setTimeout(() => {
       const turn = this.activeTurn;
       if (!turn || turn.settled) {
@@ -290,7 +310,8 @@ class CodexAppServerClient {
       timeout,
       settled: false,
       resolve: () => undefined,
-      reject: () => undefined
+      reject: () => undefined,
+      onProgress
     };
   }
 
@@ -298,6 +319,11 @@ class CodexAppServerClient {
     const cwd = appConfig.codex.workingDirectory;
     const normalizedModel = model || appConfig.codex.defaultModel;
     const networkAccess = isCodexNetworkEnabled();
+    turn.onProgress?.(
+      "正在启动 Codex 会话",
+      networkAccess ? "已启用联网访问，Codex 将直接检查可用来源。" : "当前 Codex 网络访问关闭，将使用后端检索上下文。",
+      "thinking"
+    );
     const threadResult = await this.request("thread/start", {
       cwd,
       runtimeWorkspaceRoots: [cwd],
@@ -318,6 +344,7 @@ class CodexAppServerClient {
     }
 
     turn.threadId = threadId;
+    turn.onProgress?.("正在提交任务", `模型 ${normalizedModel} 已选定，正在发送本轮上下文。`, "thinking");
 
     await this.request("turn/start", {
       threadId,
@@ -539,6 +566,16 @@ class CodexAppServerClient {
             turn.turnId = turnId;
           }
         }
+        turn.onProgress?.("正在思考中", "Codex 已开始处理本轮问题。", "thinking");
+        break;
+      }
+      case "item/started": {
+        const item = params.item;
+        if (item && typeof item === "object") {
+          const record = item as Record<string, unknown>;
+          const type = typeof record.type === "string" ? record.type : "tool";
+          turn.onProgress?.("正在执行步骤", describeCodexItem(record), type.includes("web") ? "search" : "tool");
+        }
         break;
       }
       case "item/agentMessage/delta": {
@@ -546,6 +583,9 @@ class CodexAppServerClient {
         if (typeof delta === "string") {
           turn.deltaText += delta;
           turn.fullText = turn.deltaText;
+          if (turn.deltaText.length <= delta.length + 4) {
+            turn.onProgress?.("正在撰写回答", "模型已开始输出最终回复。", "thinking");
+          }
         }
         break;
       }
@@ -579,6 +619,7 @@ class CodexAppServerClient {
           const message = codexNotificationErrorMessage(params);
           if (isTransientCodexStatus(message)) {
             console.warn(`[codex-app-server] transient status: ${message}`);
+            turn.onProgress?.("正在重连上游", message, "network");
             break;
           }
           this.finishTurnWithError(turn, new Error(message));
@@ -661,12 +702,12 @@ const clientFor = (userId: string, apiKey: string): CodexAppServerClient => {
 export const createCodexCompletion = (
   messages: ChatApiMessage[],
   model: string,
-  options: { apiKey: string; userId: string }
+  options: { apiKey: string; userId: string; onProgress?: ProgressReporter }
 ): Promise<CodexCompletion> => {
   const apiKey = options.apiKey.trim();
   if (appConfig.codex.authMode === "user-api-key" && !apiKey) {
     throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用该用户自己的 key。");
   }
 
-  return clientFor(options.userId, apiKey).complete(messages, model);
+  return clientFor(options.userId, apiKey).complete(messages, model, options.onProgress);
 };

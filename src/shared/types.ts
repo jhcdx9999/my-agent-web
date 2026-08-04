@@ -52,6 +52,13 @@ export interface ChatResponse {
   conversation?: ConversationSummary;
 }
 
+export interface ChatProgressEvent {
+  title: string;
+  detail: string;
+  kind?: "thinking" | "search" | "tool" | "file" | "image" | "data" | "network" | "done";
+  createdAt: string;
+}
+
 export interface AppConfigResponse {
   defaultModel: string;
   models: string[];

@@ -9,7 +9,20 @@ import { writeGeneratedFile } from "./fileStore";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
 import { getUserOpenAiApiKey } from "./userConfigService";
 import { HttpError } from "../errors";
-import type { AuthUser, ChatAttachment, ChatMessage, ChatRequest, ChatResponse } from "../../shared/types";
+import type { AuthUser, ChatAttachment, ChatMessage, ChatProgressEvent, ChatRequest, ChatResponse } from "../../shared/types";
+
+type ChatProgressReporter = (event: ChatProgressEvent) => void;
+
+const progressEvent = (
+  title: string,
+  detail: string,
+  kind: ChatProgressEvent["kind"] = "thinking"
+): ChatProgressEvent => ({
+  title,
+  detail,
+  kind,
+  createdAt: new Date().toISOString()
+});
 
 const getLatestPrompt = (messages: ChatMessage[]): string => messages[messages.length - 1]?.content ?? "";
 
@@ -167,12 +180,14 @@ const stripMarkdownFence = (value: string): string =>
     .replace(/```\s*$/i, "")
     .trim();
 
-const withWebSearchContext = async (prompt: string): Promise<string> => {
+const withWebSearchContext = async (prompt: string, onProgress?: ChatProgressReporter): Promise<string> => {
   if (!shouldUseWebSearch(prompt)) {
     return prompt;
   }
 
-  const results = await searchWeb(prompt);
+  const results = await searchWeb(prompt, (title, detail, kind) =>
+    onProgress?.(progressEvent(title, detail, kind === "search" ? "search" : "network"))
+  );
   return `${formatSearchContext(prompt, results)}\n\n用户原始问题：\n${prompt}`;
 };
 
@@ -208,18 +223,22 @@ const isHostedWebSearchFailure = (error: unknown): boolean => {
 const createTextCompletionWithSearchFallback = async (
   messages: ChatMessage[],
   model: string,
-  options: { apiKey?: string; shouldSearch: boolean; user: AuthUser }
+  options: { apiKey?: string; shouldSearch: boolean; user: AuthUser; onProgress?: ChatProgressReporter }
 ) => {
   if (shouldUseCodexTextRuntime(messages)) {
     if (!options.apiKey) {
       throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用你的 key。");
     }
 
-    const codexMessages = shouldUseCodexNetwork() ? messages : await messagesWithWebSearchContext(messages);
+    const codexMessages = shouldUseCodexNetwork() ? messages : await messagesWithWebSearchContext(messages, options.onProgress);
 
     return createCodexCompletion(toCodexMessages(codexMessages), model, {
       apiKey: options.apiKey,
-      userId: options.user.uid
+      userId: options.user.uid,
+      onProgress: (title, detail, kind) =>
+        options.onProgress?.(
+          progressEvent(title, detail, kind === "search" ? "search" : kind === "network" ? "network" : "thinking")
+        )
     });
   }
 
@@ -228,11 +247,13 @@ const createTextCompletionWithSearchFallback = async (
   }
 
   if (!options.shouldSearch) {
+    options.onProgress?.(progressEvent("正在请求模型", `正在调用 ${model} 生成回复。`, "thinking"));
     return createTextCompletion(toApiMessages(messages), model, { apiKey: options.apiKey, webSearch: false });
   }
 
   if (shouldTryHostedWebSearch(true)) {
     try {
+      options.onProgress?.(progressEvent("正在联网搜索", "正在使用模型内置 web_search 工具。", "search"));
       return await createTextCompletion(toApiMessages(messages), model, {
         apiKey: options.apiKey,
         webSearch: true
@@ -250,19 +271,23 @@ const createTextCompletionWithSearchFallback = async (
     }
   }
 
-  return createTextCompletion(toApiMessages(await messagesWithWebSearchContext(messages)), model, {
+  options.onProgress?.(progressEvent("正在整理搜索结果", "正在把检索到的来源放入回答上下文。", "search"));
+  return createTextCompletion(toApiMessages(await messagesWithWebSearchContext(messages, options.onProgress)), model, {
     apiKey: options.apiKey,
     webSearch: false
   });
 };
 
-const messagesWithWebSearchContext = async (messages: ChatMessage[]): Promise<ChatMessage[]> => {
+const messagesWithWebSearchContext = async (
+  messages: ChatMessage[],
+  onProgress?: ChatProgressReporter
+): Promise<ChatMessage[]> => {
   const latest = messages[messages.length - 1];
   if (!latest || latest.role !== "user" || !shouldUseWebSearch(latest.content)) {
     return messages;
   }
 
-  const content = await withWebSearchContext(latest.content);
+  const content = await withWebSearchContext(latest.content, onProgress);
   return [
     ...messages.slice(0, -1),
     {
@@ -272,8 +297,13 @@ const messagesWithWebSearchContext = async (messages: ChatMessage[]): Promise<Ch
   ];
 };
 
-export const processChat = async (request: ChatRequest, user: AuthUser): Promise<ChatResponse> => {
+export const processChat = async (
+  request: ChatRequest,
+  user: AuthUser,
+  onProgress?: ChatProgressReporter
+): Promise<ChatResponse> => {
   const normalizedMessages = normalizeUploads(request.messages);
+  onProgress?.(progressEvent("正在分析请求", "正在识别任务类型、模型、附件和会话上下文。", "thinking"));
 
   if (request.paused) {
     return {
@@ -313,8 +343,14 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
+  if (hasUploadedAttachments) {
+    onProgress?.(progressEvent("正在读取附件", "正在整理上传的图片、PDF 或文件内容。", "file"));
+  }
+
   if (intent === "image" && !latestHasUploadedAttachments) {
+    onProgress?.(progressEvent("正在生成图片", "正在把提示词发送给图像模型。", "image"));
     const image = await generateImage(latestPrompt, apiKey!);
+    onProgress?.(progressEvent("正在保存图片", "图片已生成，正在写入可下载文件。", "image"));
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,
       image.buffer,
@@ -334,6 +370,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
 
   if (intent === "file") {
     const shouldSearch = needsWebSearch(latestPrompt);
+    onProgress?.(progressEvent("正在生成文件内容", "正在组织可下载文档的正文结构。", "file"));
     const fileMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
@@ -343,8 +380,10 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     const completion = await createTextCompletionWithSearchFallback(fileMessages, textModel, {
       apiKey,
       shouldSearch,
-      user
+      user,
+      onProgress
     });
+    onProgress?.(progressEvent("正在保存文件", "文档正文已生成，正在写入可下载文件。", "file"));
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-document.md`,
       completion.content,
@@ -364,6 +403,7 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
 
   if (intent === "data") {
     const shouldSearch = needsWebSearch(latestPrompt);
+    onProgress?.(progressEvent("正在生成数据脚本", "正在根据用户要求生成本地数据处理代码。", "data"));
     const dataMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
@@ -373,11 +413,14 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
     const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, textModel, {
       apiKey,
       shouldSearch,
-      user
+      user,
+      onProgress
     });
     const code = stripMarkdownFence(codeCompletion.content);
+    onProgress?.(progressEvent("正在执行数据脚本", "正在本地沙箱中运行生成的 HTTPS-only 数据处理代码。", "data"));
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
+    onProgress?.(progressEvent("正在保存代码和结果", "正在按用户和会话保存代码、输出和下载附件。", "data"));
     const codeRun = await saveCodeRun(user, request.conversationId, code, output);
     const attachment = await writeGeneratedFile(
       `${Date.now()}-data-result.txt`,
@@ -405,7 +448,8 @@ export const processChat = async (request: ChatRequest, user: AuthUser): Promise
   const completion = await createTextCompletionWithSearchFallback(normalizedMessages, textModel, {
     apiKey,
     shouldSearch,
-    user
+    user,
+    onProgress
   });
 
   return {

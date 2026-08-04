@@ -6,6 +6,7 @@ import type {
   ChatResponse,
   ConversationDetail,
   ConversationSummary,
+  ChatProgressEvent,
   OpenAiApiKeyResponse
 } from "../shared/types";
 
@@ -169,3 +170,104 @@ export const sendChat = async (payload: ChatRequest): Promise<ChatResponse> =>
       body: JSON.stringify(payload)
     })
   );
+
+export const sendChatStream = async (
+  payload: ChatRequest,
+  handlers: {
+    onProgress?: (event: ChatProgressEvent) => void;
+  } = {}
+): Promise<ChatResponse> => {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...authHeaders()
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    if (text.trim()) {
+      try {
+        const data = JSON.parse(text) as { error?: string };
+        if (data.error) {
+          throw new Error(data.error);
+        }
+      } catch {
+        // Fall through to the HTTP error below when the body is not JSON.
+      }
+    }
+    throw new Error(
+      `请求失败：HTTP ${response.status} ${response.statusText || "上游无响应"}${
+        text.trim() ? `，响应片段：${text.trim().slice(0, 180)}` : ""
+      }`
+    );
+  }
+
+  if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+    return sendChat(payload);
+  }
+
+  if (!response.body) {
+    return sendChat(payload);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const consumeEvent = (raw: string): ChatResponse | undefined => {
+    const lines = raw.split(/\r?\n/);
+    const event = lines.find((line) => line.startsWith("event:"))?.slice("event:".length).trim() || "message";
+    const dataText = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n");
+
+    if (!dataText) {
+      return undefined;
+    }
+
+    const data = JSON.parse(dataText) as unknown;
+    if (event === "progress") {
+      handlers.onProgress?.(data as ChatProgressEvent);
+      return undefined;
+    }
+
+    if (event === "error") {
+      const error = data as { error?: string; statusCode?: number };
+      throw new Error(error.error ?? `请求失败：HTTP ${error.statusCode ?? response.status}`);
+    }
+
+    if (event === "done") {
+      return data as ChatResponse;
+    }
+
+    return undefined;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let separator = buffer.search(/\r?\n\r?\n/);
+    while (separator >= 0) {
+      const raw = buffer.slice(0, separator);
+      buffer = buffer.slice(buffer[separator] === "\r" ? separator + 4 : separator + 2);
+      const result = consumeEvent(raw);
+      if (result) {
+        await reader.cancel().catch(() => undefined);
+        return result;
+      }
+      separator = buffer.search(/\r?\n\r?\n/);
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  throw new Error("流式响应结束，但没有收到最终结果。");
+};

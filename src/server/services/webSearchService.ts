@@ -9,6 +9,7 @@ export type WebSearchResult = {
 };
 
 type SearchProvider = "serper" | "brave" | "tavily" | "duckduckgo";
+type SearchProgressReporter = (title: string, detail: string, kind?: string) => void;
 
 const freshInfoPattern =
   /(最新|现在|目前|今天|昨日|昨天|明天|本周|本月|今年|实时|联网|搜索|查询|查一下|新闻|赛程|赛果|比分|排名|积分榜|淘汰赛|世界杯|欧洲杯|欧冠|英超|NBA|股票|汇率|天气|价格|行情|币价|加密货币|现货|期货|最高价|最低价|波动率|current|latest|today|yesterday|news|score|schedule|standing|price|weather|world cup|2026|BTC|ETH|bitcoin|crypto|binance|volatility|ohlc|kline)/i;
@@ -627,7 +628,10 @@ const trustLabel = (url: string): string => {
 export const shouldUseWebSearch = (prompt: string): boolean =>
   appConfig.search.enabled && freshInfoPattern.test(prompt);
 
-export const searchWeb = async (query: string): Promise<WebSearchResult[]> => {
+export const searchWeb = async (
+  query: string,
+  onProgress?: SearchProgressReporter
+): Promise<WebSearchResult[]> => {
   if (!appConfig.search.enabled) {
     return [];
   }
@@ -636,10 +640,12 @@ export const searchWeb = async (query: string): Promise<WebSearchResult[]> => {
   const queries = buildSearchQueries(query);
   const errors: string[] = [];
   const collected: WebSearchResult[] = seedResultsForQuery(query);
+  onProgress?.("正在联网搜索", `准备查询 ${providers.join(", ")}。`, "search");
 
   for (const provider of providers) {
     for (const searchQuery of queries) {
       try {
+        onProgress?.("正在联网搜索", `${provider}: ${searchQuery}`, "search");
         collected.push(...(await runProvider(provider, searchQuery)));
       } catch (error) {
         errors.push(`${provider}/${searchQuery}: ${error instanceof Error ? error.message : String(error)}`);
@@ -659,9 +665,14 @@ export const searchWeb = async (query: string): Promise<WebSearchResult[]> => {
 
   const pageResults = appConfig.search.fetchPages
     ? await Promise.all(
-        ranked.map((result, index) =>
-          index < appConfig.search.maxFetchPages ? fetchPageContent(result, query) : result
-        )
+        ranked.map((result, index) => {
+          if (index < appConfig.search.maxFetchPages) {
+            onProgress?.("正在读取网页", `${result.title} - ${result.url}`, "search");
+            return fetchPageContent(result, query);
+          }
+
+          return result;
+        })
       )
     : ranked;
 
