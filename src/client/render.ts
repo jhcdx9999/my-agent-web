@@ -311,7 +311,7 @@ export const renderApp = (state: AppState): string => {
       <section class="main-column">
         <header class="topbar">
           <section class="brand-block" aria-label="应用信息">
-            <h1>Custom GPT Web</h1>
+            <h1>My AI Web</h1>
             <p>${state.paused ? "对话暂停中" : state.statusText}</p>
           </section>
           <section class="topbar-actions" aria-label="主题">
@@ -405,7 +405,7 @@ export const renderApp = (state: AppState): string => {
                     )
                     .join("")}
                 </select>
-                <span class="runtime-pill">${state.textRuntime === "codex" ? "Codex" : "OpenAI"}</span>
+                <span class="runtime-pill">${state.textRuntime === "codex" ? "AI" : "OpenAI"}</span>
                 <button class="pause-button" id="pauseButton" type="button" aria-pressed="${state.paused}">
                   ${state.paused ? "继续" : "暂停"}
                 </button>

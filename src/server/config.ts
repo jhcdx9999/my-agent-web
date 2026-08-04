@@ -165,7 +165,8 @@ export const appConfig = {
     enableLocalCodeExecution: boolFromEnv(process.env.ENABLE_LOCAL_CODE_EXECUTION, true),
     localCodeTimeoutMs: intFromEnv(process.env.LOCAL_CODE_TIMEOUT_MS, 2500),
     maxHistoryMessages: intFromEnv(process.env.MAX_HISTORY_MESSAGES, 16),
-    maxMessageChars: intFromEnv(process.env.MAX_MESSAGE_CHARS, 12000)
+    maxMessageChars: intFromEnv(process.env.MAX_MESSAGE_CHARS, 12000),
+    maxContextChars: intFromEnv(process.env.MAX_CONTEXT_CHARS, 200000)
   },
   upload: {
     maxFiles: intFromEnv(process.env.MAX_UPLOAD_FILES, 5),

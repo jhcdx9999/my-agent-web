@@ -96,14 +96,54 @@ const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
   }));
 };
 
-const toApiMessages = (messages: ChatMessage[]) => {
-  const bounded = messages
-    .slice(-appConfig.safety.maxHistoryMessages)
-    .map((message) => ({
+const compactMessagesForContext = (messages: ChatMessage[]) => {
+  const selected: Array<{
+    role: ChatMessage["role"];
+    content: string;
+    attachments?: ChatAttachment[];
+  }> = [];
+  let used = 0;
+  let compactedCount = 0;
+  const maxMessages = appConfig.safety.maxHistoryMessages;
+  const maxContextChars = appConfig.safety.maxContextChars;
+
+  for (const message of [...messages].reverse()) {
+    if (selected.length >= maxMessages) {
+      compactedCount += 1;
+      continue;
+    }
+
+    const content = message.content.slice(0, appConfig.safety.maxMessageChars);
+    const attachments = message.attachments?.filter((attachment) => attachment.source === "uploaded" && attachment.dataUrl);
+    const attachmentBudget = attachments?.reduce((sum, attachment) => sum + (attachment.filename.length + attachment.mimeType.length), 0) ?? 0;
+    const cost = content.length + attachmentBudget;
+
+    if (selected.length > 0 && used + cost > maxContextChars) {
+      compactedCount += 1;
+      continue;
+    }
+
+    used += cost;
+    selected.push({
       role: message.role,
-      content: message.content.slice(0, appConfig.safety.maxMessageChars),
-      attachments: message.attachments?.filter((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
-    }));
+      content,
+      attachments
+    });
+  }
+
+  const bounded = selected.reverse();
+  if (compactedCount > 0) {
+    bounded.unshift({
+      role: "assistant",
+      content: `[上下文已自动压缩：有 ${compactedCount} 条较早消息因超过 ${maxContextChars} 字符预算未放入本次模型上下文。请优先依据当前保留的最新对话回答。]`
+    });
+  }
+
+  return bounded;
+};
+
+const toApiMessages = (messages: ChatMessage[]) => {
+  const bounded = compactMessagesForContext(messages);
 
   return [
     {
@@ -403,7 +443,7 @@ export const processChat = async (
 
   if (intent === "data") {
     const shouldSearch = needsWebSearch(latestPrompt);
-    onProgress?.(progressEvent("正在生成数据脚本", "正在根据用户要求生成本地数据处理代码。", "data"));
+    onProgress?.(progressEvent("正在生成代码", "该任务需要代码进行数据获取或分析，正在生成本地数据处理脚本。", "data"));
     const dataMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
@@ -417,7 +457,7 @@ export const processChat = async (
       onProgress
     });
     const code = stripMarkdownFence(codeCompletion.content);
-    onProgress?.(progressEvent("正在执行数据脚本", "正在本地沙箱中运行生成的 HTTPS-only 数据处理代码。", "data"));
+    onProgress?.(progressEvent("正在执行代码", "正在本地沙箱中运行生成的 HTTPS-only 数据获取或分析代码。", "data"));
     const result = await runLocalDataCode(code);
     const output = result.output || JSON.stringify(result.returned, null, 2) || "本地数据任务已执行。";
     onProgress?.(progressEvent("正在保存代码和结果", "正在按用户和会话保存代码、输出和下载附件。", "data"));

@@ -229,7 +229,7 @@ const describeCodexItem = (record: Record<string, unknown>): string => {
     return text.length > 160 ? `${text.slice(0, 160)}...` : text;
   }
 
-  return `Codex 正在执行 ${type} 步骤。`;
+  return `正在执行 ${type} 步骤。`;
 };
 
 class CodexAppServerClient {
@@ -320,8 +320,8 @@ class CodexAppServerClient {
     const normalizedModel = model || appConfig.codex.defaultModel;
     const networkAccess = isCodexNetworkEnabled();
     turn.onProgress?.(
-      "正在启动 Codex 会话",
-      networkAccess ? "已启用联网访问，Codex 将直接检查可用来源。" : "当前 Codex 网络访问关闭，将使用后端检索上下文。",
+      "正在启动模型会话",
+      networkAccess ? "已启用联网访问，模型将直接检查可用来源。" : "当前网络访问关闭，将使用后端检索上下文。",
       "thinking"
     );
     const threadResult = await this.request("thread/start", {
@@ -566,7 +566,7 @@ class CodexAppServerClient {
             turn.turnId = turnId;
           }
         }
-        turn.onProgress?.("正在思考中", "Codex 已开始处理本轮问题。", "thinking");
+        turn.onProgress?.("正在思考中", "模型已开始处理本轮问题。", "thinking");
         break;
       }
       case "item/started": {

@@ -31,6 +31,8 @@ if (!root) {
   throw new Error("App root was not found.");
 }
 
+const appRoot = root;
+
 const readAuthMode = (loginMode: AppState["authLoginMode"] = "free"): AppState["authMode"] =>
   loginMode === "dominant" ? "login" : location.hash === "#/register" ? "register" : "login";
 
@@ -47,7 +49,7 @@ let activeRequestId = 0;
 
 const draw = (scrollToBottom = true): void => {
   applyTheme(state.theme);
-  root.innerHTML = renderApp(state);
+  appRoot.innerHTML = renderApp(state);
   bindEvents();
   if (scrollToBottom) {
     scrollMessagesToBottom();
@@ -571,6 +573,19 @@ const bindAuthEvents = (): void => {
 
 function bindEvents(): void {
   bindAuthEvents();
+
+  appRoot.addEventListener("click", (event) => {
+    if (!state.conversationMenuId) {
+      return;
+    }
+
+    const target = event.target as Element | null;
+    if (target?.closest("[data-conversation-menu], .conversation-menu")) {
+      return;
+    }
+
+    updateState({ conversationMenuId: undefined }, { scroll: false });
+  });
 
   document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
     button.addEventListener("click", () => {
