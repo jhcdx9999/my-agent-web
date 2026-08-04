@@ -118,7 +118,7 @@ const parseResponseJson = async <T>(response: Response): Promise<T> => {
 
 const formatOpenAiErrorMessage = (message: string): string =>
   /upstream request failed/i.test(message)
-    ? `${message}。如果这是联网搜索、上传图片、PDF 或文件时出现，请确认 OPENAI_BASE_URL 对应的服务和当前模型支持 Responses API 的 web_search/input_image/input_file。`
+    ? `${message}。如果这是联网搜索或文件理解任务，请确认 OPENAI_BASE_URL 对应服务支持 Responses API 的 web_search/input_image/input_file；如果这是图片生成或改图，请确认该服务支持 /images/generations、/images/edits 和当前 OPENAI_IMAGE_MODEL。`
     : message;
 
 const parseNonJsonOpenAiError = (text: string): string => {
@@ -170,6 +170,20 @@ const dataUrlToText = (dataUrl: string): string | undefined => {
 
   try {
     return Buffer.from(dataUrl.slice(markerIndex + marker.length), "base64").toString("utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+const dataUrlToBuffer = (dataUrl: string): Buffer | undefined => {
+  const marker = ";base64,";
+  const markerIndex = dataUrl.indexOf(marker);
+  if (markerIndex < 0) {
+    return undefined;
+  }
+
+  try {
+    return Buffer.from(dataUrl.slice(markerIndex + marker.length), "base64");
   } catch {
     return undefined;
   }
@@ -407,4 +421,79 @@ export const generateImage = async (
   }
 
   throw new HttpError(502, "Image generation returned no image data.", data);
+};
+
+export const editImage = async (
+  prompt: string,
+  images: ChatAttachment[],
+  apiKey: string
+): Promise<{ buffer: Buffer; mimeType: string; extension: "png" | "jpg" | "webp" }> => {
+  const outputFormat = appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat;
+  const extension = outputFormat === "jpg" ? "jpg" : outputFormat === "webp" ? "webp" : "png";
+  const mimeType = extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+  const form = new FormData();
+  const imageAttachments = images.filter(
+    (attachment) =>
+      attachment.source === "uploaded" &&
+      Boolean(attachment.dataUrl) &&
+      (attachment.kind === "image" || attachment.mimeType.startsWith("image/"))
+  );
+
+  if (imageAttachments.length === 0) {
+    return generateImage(prompt, apiKey);
+  }
+
+  form.set("model", appConfig.openai.imageModel);
+  form.set("prompt", prompt);
+  form.set("size", appConfig.openai.imageSize);
+  form.set("quality", appConfig.openai.imageQuality);
+  form.set("response_format", "b64_json");
+  form.set("output_format", extension === "jpg" ? "jpeg" : extension);
+
+  const imageFieldName = imageAttachments.length > 1 ? "image[]" : "image";
+  for (const attachment of imageAttachments) {
+    const buffer = attachment.dataUrl ? dataUrlToBuffer(attachment.dataUrl) : undefined;
+    if (!buffer) {
+      continue;
+    }
+
+    form.append(
+      imageFieldName,
+      new Blob([buffer], { type: attachment.mimeType || "image/png" }),
+      attachment.filename || `image.${extension}`
+    );
+  }
+
+  const response = await callOpenAi("/images/edits", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireApiKey(apiKey)}`
+    },
+    body: form
+  });
+
+  const data = await parseResponseJson<ImageResponse>(response);
+  const item = data.data?.[0];
+
+  if (item?.b64_json) {
+    return {
+      buffer: Buffer.from(item.b64_json, "base64"),
+      mimeType,
+      extension
+    };
+  }
+
+  if (item?.url) {
+    const imageResponse = await fetch(item.url);
+    if (!imageResponse.ok) {
+      throw new HttpError(imageResponse.status, "Edited image URL could not be downloaded.");
+    }
+    return {
+      buffer: Buffer.from(await imageResponse.arrayBuffer()),
+      mimeType: imageResponse.headers.get("content-type") ?? mimeType,
+      extension
+    };
+  }
+
+  throw new HttpError(502, "Image editing returned no image data.", data);
 };

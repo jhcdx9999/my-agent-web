@@ -1,6 +1,6 @@
 import { appConfig } from "../config";
 import { createId } from "../utils/id";
-import { createTextCompletion, generateImage } from "./openaiClient";
+import { createTextCompletion, editImage, generateImage } from "./openaiClient";
 import { createCodexCompletion } from "./codexAppServerClient";
 import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
@@ -32,6 +32,16 @@ const progressEvent = (
 });
 
 const getLatestPrompt = (messages: ChatMessage[]): string => messages[messages.length - 1]?.content ?? "";
+
+const uploadedImagesForImageTask = (messages: ChatMessage[]): ChatAttachment[] =>
+  messages.flatMap((message) =>
+    message.attachments?.filter(
+      (attachment) =>
+        attachment.source === "uploaded" &&
+        Boolean(attachment.dataUrl) &&
+        (attachment.kind === "image" || attachment.mimeType.startsWith("image/"))
+    ) ?? []
+  );
 
 const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
   const uploadCount = messages.reduce(
@@ -362,10 +372,7 @@ export const processChat = async (
   const apiKey = await getUserOpenAiApiKey(user);
   const intent = detectIntent(materializedMessages);
   const latestPrompt = getLatestPrompt(materializedMessages);
-  const latestMessage = materializedMessages[materializedMessages.length - 1];
-  const latestHasUploadedAttachments = Boolean(
-    latestMessage?.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
-  );
+  const imageReferences = uploadedImagesForImageTask(materializedMessages);
   const hasUploadedAttachments = hasBinaryUploadedAttachment(materializedMessages);
   const textModel = appConfig.ai.textRuntime === "codex" && !hasUploadedAttachments ? codexModel : openAiModel;
   const requiresOpenAiApiKey =
@@ -378,13 +385,24 @@ export const processChat = async (
     throw new HttpError(400, "请先在页面中配置你的 API Key。");
   }
 
-  if (hasUploadedAttachments && appConfig.openai.textApi === "chat") {
+  if (hasUploadedAttachments && intent !== "image" && appConfig.openai.textApi === "chat") {
     throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
-  if (intent === "image" && !latestHasUploadedAttachments) {
-    onProgress?.(progressEvent("正在生成图片", "正在把提示词发送给图像模型。", "image"));
-    const image = await generateImage(latestPrompt, apiKey!);
+  if (intent === "image") {
+    onProgress?.(
+      progressEvent(
+        imageReferences.length > 0 ? "正在根据参考图生成图片" : "正在生成图片",
+        imageReferences.length > 0
+          ? `正在用 ${appConfig.openai.imageModel} 读取上传图片并生成新图。`
+          : `正在用 ${appConfig.openai.imageModel} 生成图片。`,
+        "image"
+      )
+    );
+    const image =
+      imageReferences.length > 0
+        ? await editImage(latestPrompt, imageReferences, apiKey!)
+        : await generateImage(latestPrompt, apiKey!);
     onProgress?.(progressEvent("正在保存图片", "图片已生成，正在写入可下载文件。", "image"));
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,

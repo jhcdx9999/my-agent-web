@@ -75,6 +75,11 @@ const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
 const configuredCodexModels = csvFromEnv(process.env.CODEX_MODELS, [
   "gpt-5.5"
 ]);
+const defaultPdfPythonCommands = process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
+const pdfPythonCommands = csvFromEnv(
+  process.env.PDF_PYTHON_COMMANDS ?? process.env.PDF_PYTHON_COMMAND,
+  defaultPdfPythonCommands
+);
 
 export const appConfig = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -161,6 +166,8 @@ export const appConfig = {
     maxFiles: intFromEnv(process.env.MAX_UPLOAD_FILES, 5),
     maxBytesPerFile: intFromEnv(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
     maxExtractedTextChars: intFromEnv(process.env.MAX_EXTRACTED_TEXT_CHARS, 12000),
+    pdfTextCommand: stringFromEnv(process.env.PDF_TEXT_COMMAND, "pdftotext"),
+    pdfPythonCommands,
     accept:
       "image/*,.pdf,.txt,.md,.csv,.json,.ts,.tsx,.js,.jsx,.html,.css,.xml,.yaml,.yml,.log"
   }

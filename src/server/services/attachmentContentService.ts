@@ -95,6 +95,99 @@ const cleanExtractedText = (text: string): string =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+const isCjkChar = (char: string): boolean => /[\u3400-\u9fff\uf900-\ufaff]/u.test(char);
+const isAsciiTextChar = (char: string): boolean => /[A-Za-z0-9]/.test(char);
+const isCommonReadableChar = (char: string): boolean =>
+  isCjkChar(char) ||
+  isAsciiTextChar(char) ||
+  /[\s.,;:!?()[\]{}'"@#%&*+=/_|<>~`$^，。；：！？（）【】《》“”‘’、·・-]/u.test(char);
+
+const textStats = (text: string) => {
+  const chars = [...cleanExtractedText(text)];
+  const cjkChars = chars.filter(isCjkChar).length;
+  const asciiTextChars = chars.filter(isAsciiTextChar).length;
+  const readableChars = chars.filter(isCommonReadableChar).length;
+  const replacementChars = chars.filter((char) => char === "\uFFFD").length;
+  const suspiciousChars = chars.filter((char) => !isCommonReadableChar(char)).length;
+
+  return {
+    length: chars.length,
+    cjkChars,
+    asciiTextChars,
+    readableChars,
+    replacementChars,
+    suspiciousChars
+  };
+};
+
+const textQualityScore = (text: string): number => {
+  const cleaned = cleanExtractedText(text);
+  if (!cleaned) {
+    return 0;
+  }
+
+  const stats = textStats(cleaned);
+  const readableRatio = stats.readableChars / Math.max(stats.length, 1);
+  const suspiciousRatio = stats.suspiciousChars / Math.max(stats.length, 1);
+  const resumeKeywordBonus = /(简历|出生年月|手机号码|电子邮箱|教育|本科|硕士|工作|项目|成果|集团|经理|负责)/u.test(cleaned)
+    ? 800
+    : 0;
+
+  return (
+    stats.cjkChars * 6 +
+    stats.asciiTextChars * 2 +
+    readableRatio * 500 +
+    resumeKeywordBonus -
+    stats.replacementChars * 80 -
+    stats.suspiciousChars * 8 -
+    suspiciousRatio * 1200
+  );
+};
+
+const isReadableExtractedText = (text: string): boolean => {
+  const cleaned = cleanExtractedText(text);
+  if (cleaned.length < 20) {
+    return false;
+  }
+
+  const stats = textStats(cleaned);
+  const meaningfulChars = stats.cjkChars + stats.asciiTextChars;
+  const readableRatio = stats.readableChars / Math.max(stats.length, 1);
+  const suspiciousRatio = stats.suspiciousChars / Math.max(stats.length, 1);
+
+  return (
+    meaningfulChars >= 12 &&
+    readableRatio >= 0.72 &&
+    suspiciousRatio <= 0.18 &&
+    stats.replacementChars <= 2
+  );
+};
+
+const dedupeLines = (text: string): string => {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+
+  for (const line of cleanExtractedText(text).split(/\r?\n/)) {
+    const normalized = line.replace(/\s+/g, " ").trim();
+    if (!normalized) {
+      if (lines[lines.length - 1] !== "") {
+        lines.push("");
+      }
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    lines.push(line.trim());
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+};
+
 const limitExtractedText = (text: string, filename: string): string => {
   const cleaned = cleanExtractedText(text);
   if (cleaned.length <= appConfig.upload.maxExtractedTextChars) {
@@ -240,33 +333,104 @@ const extractPdfTextFallback = (buffer: Buffer): string => {
   return cleanExtractedText(pieces.join(" "));
 };
 
-const tryExtractPdfWithPoppler = async (buffer: Buffer): Promise<string> => {
+const tryExtractPdfWithPoppler = async (pdfPath: string): Promise<string> => {
+  if (!appConfig.upload.pdfTextCommand) {
+    return "";
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      appConfig.upload.pdfTextCommand,
+      ["-layout", "-enc", "UTF-8", pdfPath, "-"],
+      {
+        encoding: "utf8",
+        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
+        timeout: 15000,
+        windowsHide: true
+      }
+    );
+    return cleanExtractedText(stdout);
+  } catch {
+    return "";
+  }
+};
+
+const pdfPythonExtractorScript = `
+import sys
+path = sys.argv[1]
+texts = []
+def stats(text):
+    chars = list(text.strip())
+    if not chars:
+        return 0
+    cjk = sum(1 for ch in chars if "\\u3400" <= ch <= "\\u9fff")
+    ascii_text = sum(1 for ch in chars if ch.isascii() and ch.isalnum())
+    readable = sum(1 for ch in chars if ("\\u3400" <= ch <= "\\u9fff") or (ch.isascii() and (ch.isalnum() or ch.isspace() or ch in ".,;:!?()[]{}'\\\"@#%&*+=/_|<>~$^-")) or ch in "，。；：！？（）【】《》“”‘’、·・")
+    suspicious = len(chars) - readable
+    bonus = 800 if any(word in text for word in ["简历", "出生年月", "手机号码", "电子邮箱", "教育", "本科", "硕士", "工作", "成果", "经理", "负责"]) else 0
+    return cjk * 6 + ascii_text * 2 + readable / max(len(chars), 1) * 500 + bonus - suspicious * 8
+try:
+    from pypdf import PdfReader
+    reader = PdfReader(path)
+    texts.append("\\n".join((page.extract_text() or "") for page in reader.pages))
+except Exception:
+    pass
+try:
+    import pdfplumber
+    with pdfplumber.open(path) as pdf:
+        texts.append("\\n".join((page.extract_text() or "") for page in pdf.pages))
+except Exception:
+    pass
+print(max((text for text in texts if text), key=stats, default=""))
+`.trim();
+
+const tryExtractPdfWithPython = async (pdfPath: string): Promise<string> => {
+  const commands = appConfig.upload.pdfPythonCommands;
+
+  for (const command of commands) {
+    try {
+      const { stdout } = await execFileAsync(command, ["-c", pdfPythonExtractorScript, pdfPath], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PYTHONIOENCODING: "utf-8"
+        },
+        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
+        timeout: 20000,
+        windowsHide: true
+      });
+      const text = cleanExtractedText(stdout);
+      if (isReadableExtractedText(text)) {
+        return text;
+      }
+    } catch {
+      // Try the next configured Python command.
+    }
+  }
+
+  return "";
+};
+
+const extractPdfText = async (buffer: Buffer): Promise<string> => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "gpt-web-pdf-"));
   const pdfPath = path.join(tempDir, "upload.pdf");
 
   try {
     await fs.writeFile(pdfPath, buffer);
-    const { stdout } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", pdfPath, "-"], {
-      encoding: "utf8",
-      maxBuffer: appConfig.upload.maxExtractedTextChars * 4,
-      timeout: 15000,
-      windowsHide: true
-    });
-    return cleanExtractedText(stdout);
-  } catch {
-    return "";
+    const candidates = [
+      await tryExtractPdfWithPoppler(pdfPath),
+      dedupeLines(await tryExtractPdfWithPython(pdfPath)),
+      extractPdfTextFallback(buffer)
+    ]
+      .map(cleanExtractedText)
+      .filter(Boolean)
+      .sort((left, right) => textQualityScore(right) - textQualityScore(left));
+    const best = candidates[0] ?? "";
+
+    return isReadableExtractedText(best) ? best : "";
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
-};
-
-const extractPdfText = async (buffer: Buffer): Promise<string> => {
-  const popplerText = await tryExtractPdfWithPoppler(buffer);
-  if (popplerText) {
-    return popplerText;
-  }
-
-  return extractPdfTextFallback(buffer);
 };
 
 const attachmentTextBlock = (attachment: ChatAttachment, text: string): string =>

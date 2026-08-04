@@ -1,7 +1,7 @@
 import type { AssistantIntent, ChatMessage } from "../../shared/types";
 
 const imagePattern =
-  /(生成|绘制|做一张|来一张|create|generate|draw|image|picture|photo|海报|插画|图片)/i;
+  /(生成|绘制|画一张|做一张|来一张|改图|修图|修改图片|编辑图片|根据.*图|参考.*图|换成|变成|去掉|加上|create|generate|draw|image|picture|photo|poster|illustration|edit image|modify image|reference image|based on.*image|make.*image)/i;
 const filePattern =
   /(生成|创建|导出|写成|保存为|下载|文件|文档|表格|csv|xlsx|json|txt|md|markdown|report|download|file)/i;
 
