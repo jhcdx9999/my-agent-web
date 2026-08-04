@@ -45,7 +45,7 @@ const pathFromEnv = (value: string | undefined): string => {
   return path.resolve(process.cwd(), expanded);
 };
 
-const defaultModel = process.env.OPENAI_DEFAULT_MODEL ?? "gpt-5.5";
+const defaultModel = "gpt-5.5";
 const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
@@ -70,17 +70,10 @@ const codexReasoningEffort = ["none", "minimal", "low", "medium", "high", "xhigh
   ? process.env.CODEX_REASONING_EFFORT!
   : "xhigh";
 const configuredModels = csvFromEnv(process.env.OPENAI_MODELS, [
-  "gpt-5.5",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna"
+  "gpt-5.5"
 ]);
 const configuredCodexModels = csvFromEnv(process.env.CODEX_MODELS, [
-  process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.5",
-  "gpt-5.5",
-  "gpt-5-codex",
-  "gpt-5.1",
-  "gpt-5"
+  "gpt-5.5"
 ]);
 
 export const appConfig = {
@@ -104,9 +97,7 @@ export const appConfig = {
     baseUrl: openaiBaseUrl,
     textApi: process.env.OPENAI_TEXT_API === "chat" ? "chat" : "responses",
     defaultModel,
-    models: configuredModels.includes(defaultModel)
-      ? configuredModels
-      : [defaultModel, ...configuredModels],
+    models: ["gpt-5.5"],
     systemPrompt:
       process.env.OPENAI_SYSTEM_PROMPT ??
       "你是一个高质量中文 AI 助手。回答前要先在内部充分分析用户目标、约束、时效性和潜在风险；需要最新事实、赛果、价格、法规、版本或其他可能变化的信息时，优先使用联网工具和权威来源核验。输出只展示结论、依据、步骤和来源，不展示隐藏推理链；不确定时明确说明不确定点，并给出可验证的下一步。",
@@ -118,10 +109,8 @@ export const appConfig = {
   },
   codex: {
     command: stringFromEnv(process.env.CODEX_COMMAND, "codex"),
-    defaultModel: process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0] ?? "gpt-5.5",
-    models: configuredCodexModels.includes(process.env.CODEX_DEFAULT_MODEL ?? configuredCodexModels[0])
-      ? configuredCodexModels
-      : [process.env.CODEX_DEFAULT_MODEL ?? "gpt-5.5", ...configuredCodexModels],
+    defaultModel: "gpt-5.5",
+    models: ["gpt-5.5"],
     reasoningEffort: codexReasoningEffort,
     timeoutMs: intFromEnv(process.env.CODEX_TIMEOUT_MS, 300000),
     workingDirectory: path.resolve(process.cwd(), process.env.CODEX_WORKING_DIR ?? "."),

@@ -165,6 +165,18 @@ const renderThemeButton = (theme: ThemeName, activeTheme: ThemeName): string => 
   `;
 };
 
+const renderApiKeyButton = (state: AppState): string => `
+  <button class="api-key-button ${state.user?.hasOpenAiApiKey ? "is-ready" : "needs-key"}" data-toggle-api-key-panel type="button">
+    ${
+      state.user?.hasOpenAiApiKey
+        ? "API Key 已配置"
+        : state.requiresOpenAiApiKeyForText
+          ? "配置 API Key"
+          : "API Key 可选"
+    }
+  </button>
+`;
+
 const renderConversation = (
   conversation: ConversationSummary,
   activeConversationId: string | undefined,
@@ -198,6 +210,70 @@ const renderConversation = (
         : ""
     }
   </div>
+`;
+
+const renderConversationList = (state: AppState): string => `
+  <div class="conversation-list">
+    ${
+      state.conversations.length
+        ? state.conversations
+            .map((conversation) =>
+              renderConversation(
+                conversation,
+                state.activeConversationId,
+                state.pending,
+                state.conversationMenuId
+              )
+            )
+            .join("")
+        : `<div class="conversation-empty">鏆傛棤鍘嗗彶</div>`
+    }
+  </div>
+`;
+
+const renderMobileMenu = (state: AppState): string => `
+  <section class="mobile-menu ${state.mobileMenuOpen ? "is-open" : ""}" aria-label="移动端配置菜单">
+    <button
+      class="mobile-menu-button"
+      type="button"
+      data-mobile-menu-toggle
+      aria-label="打开配置菜单"
+      aria-expanded="${state.mobileMenuOpen ? "true" : "false"}"
+    >
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    ${
+      state.mobileMenuOpen
+        ? `<div class="mobile-menu-panel">
+            <div class="mobile-menu-section">
+              <strong>主题</strong>
+              <div class="theme-switcher" role="group" aria-label="主题选择">
+                ${(["white", "sapphire", "black"] as ThemeName[])
+                  .map((theme) => renderThemeButton(theme, state.theme))
+                  .join("")}
+              </div>
+            </div>
+            <div class="mobile-menu-section">
+              <strong>配置</strong>
+              ${renderApiKeyButton(state)}
+            </div>
+            <div class="mobile-menu-section mobile-history-section">
+              <div class="mobile-menu-section-head">
+                <strong>会话</strong>
+                <button class="new-chat-button" data-new-conversation type="button" ${state.pending ? "disabled" : ""}>新建</button>
+              </div>
+              ${renderConversationList(state)}
+            </div>
+            <div class="mobile-menu-section mobile-account-section">
+              <span>${escapeHtml(state.user?.username ?? "")}</span>
+              <button data-logout type="button">退出</button>
+            </div>
+          </div>`
+        : ""
+    }
+  </section>
 `;
 
 const renderRenameModal = (state: AppState): string => {
@@ -271,7 +347,7 @@ export const renderApp = (state: AppState): string => {
   }
 
   return `
-    <main class="app-shell">
+    <main class="app-shell ${state.apiKeyPanelOpen ? "has-api-key-open" : ""} ${state.mobileMenuOpen ? "has-mobile-menu-open" : ""}">
       <aside class="sidebar" aria-label="历史对话">
         <div class="sidebar-head">
           <div>
@@ -280,32 +356,9 @@ export const renderApp = (state: AppState): string => {
           </div>
           <button id="logoutButton" type="button">退出</button>
         </div>
-        <button class="api-key-button ${state.user.hasOpenAiApiKey ? "is-ready" : "needs-key"}" id="toggleApiKeyPanel" type="button">
-          ${
-            state.user.hasOpenAiApiKey
-              ? "OpenAI Key 已配置"
-              : state.requiresOpenAiApiKeyForText
-                ? "配置 OpenAI Key"
-                : "OpenAI Key 可选"
-          }
-        </button>
-        <button class="new-chat-button" id="newConversationButton" type="button" ${state.pending ? "disabled" : ""}>新建对话</button>
-        <div class="conversation-list">
-          ${
-            state.conversations.length
-              ? state.conversations
-                  .map((conversation) =>
-                    renderConversation(
-                      conversation,
-                      state.activeConversationId,
-                      state.pending,
-                      state.conversationMenuId
-                    )
-                  )
-                  .join("")
-              : `<div class="conversation-empty">暂无历史</div>`
-          }
-        </div>
+        ${renderApiKeyButton(state)}
+        <button class="new-chat-button" data-new-conversation type="button" ${state.pending ? "disabled" : ""}>新建对话</button>
+        ${renderConversationList(state)}
       </aside>
 
       <section class="main-column">
@@ -320,6 +373,7 @@ export const renderApp = (state: AppState): string => {
                 .map((theme) => renderThemeButton(theme, state.theme))
                 .join("")}
             </div>
+            ${renderMobileMenu(state)}
           </section>
         </header>
 
@@ -332,7 +386,7 @@ export const renderApp = (state: AppState): string => {
             state.apiKeyPanelOpen || (state.requiresOpenAiApiKeyForText && !state.user.hasOpenAiApiKey)
               ? `<form class="api-key-panel" id="apiKeyForm">
                   <div>
-                    <strong>${state.user.hasOpenAiApiKey ? "更新 OpenAI API key" : "配置 OpenAI API key"}</strong>
+                    <strong>${state.user.hasOpenAiApiKey ? "更新 API Key" : "配置 API Key"}</strong>
                     <span>${
                       state.textRuntime === "codex" && state.requiresOpenAiApiKeyForText
                         ? "Codex 文本模式会按服务器的 provider 配置使用该密钥；可填官方或兼容代理对应的 key。"
@@ -384,17 +438,17 @@ export const renderApp = (state: AppState): string => {
               ${state.pending || state.paused ? "disabled" : ""}
             ></textarea>
             <div class="composer-footer">
-              <div class="upload-controls">
-                <input
-                  id="fileInput"
-                  type="file"
-                  multiple
-                  accept="${escapeHtml(state.uploadAccept)}"
-                  ${state.pending || state.paused ? "disabled" : ""}
-                />
-                <label class="upload-button" for="fileInput">上传文件</label>
-              </div>
               <div class="composer-controls">
+                <div class="upload-controls">
+                  <input
+                    id="fileInput"
+                    type="file"
+                    multiple
+                    accept="${escapeHtml(state.uploadAccept)}"
+                    ${state.pending || state.paused ? "disabled" : ""}
+                  />
+                  <label class="upload-button" for="fileInput">上传</label>
+                </div>
                 <select id="modelSelect" aria-label="选择模型" ${state.pending ? "disabled" : ""}>
                   ${state.availableModels
                     .map(

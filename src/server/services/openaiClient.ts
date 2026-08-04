@@ -86,7 +86,7 @@ type ImageResponse = {
 const requireApiKey = (apiKey: string): string => {
   const key = apiKey.trim();
   if (!key) {
-    throw new HttpError(400, "请先配置你的 OpenAI API key。");
+    throw new HttpError(400, "请先配置你的 API Key。");
   }
 
   return key;

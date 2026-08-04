@@ -237,7 +237,7 @@ export const userHasOpenAiApiKey = async (user: AuthUser): Promise<boolean> =>
 export const saveUserOpenAiApiKey = async (user: AuthUser, apiKey: string): Promise<void> => {
   const key = apiKey.trim();
   if (key.length < 20 || /\s/.test(key)) {
-    throw new HttpError(400, "请输入有效的 OpenAI API key。");
+    throw new HttpError(400, "请输入有效的 API Key。");
   }
 
   const config = await readUserConfig({ ensureUids: true });

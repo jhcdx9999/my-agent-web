@@ -706,7 +706,7 @@ export const createCodexCompletion = (
 ): Promise<CodexCompletion> => {
   const apiKey = options.apiKey.trim();
   if (appConfig.codex.authMode === "user-api-key" && !apiKey) {
-    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用该用户自己的 key。");
+    throw new HttpError(400, "请先在页面中配置你的 API Key，Codex 文本模式会使用该用户自己的 key。");
   }
 
   return clientFor(options.userId, apiKey).complete(messages, model, options.onProgress);

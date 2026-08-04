@@ -35,6 +35,7 @@ export interface AppState {
   statusText: string;
   waitingTitle: string;
   waitingDetail: string;
+  mobileMenuOpen: boolean;
   editingMessageId?: string;
   editingContent: string;
   conversationMenuId?: string;
@@ -68,6 +69,7 @@ export const createInitialState = (): AppState => ({
   statusText: "准备就绪",
   waitingTitle: "",
   waitingDetail: "",
+  mobileMenuOpen: false,
   editingContent: "",
   renamingTitle: "",
   renamingError: "",

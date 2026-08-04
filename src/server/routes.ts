@@ -77,11 +77,11 @@ export const createRouter = (): express.Router => {
 
   router.get("/config", (_request, response) => {
     const textRuntime = appConfig.ai.textRuntime;
-    const models = textRuntime === "codex" ? appConfig.codex.models : appConfig.openai.models;
     const defaultModel = textRuntime === "codex" ? appConfig.codex.defaultModel : appConfig.openai.defaultModel;
+    const models = ["gpt-5.5"];
 
     response.json({
-      defaultModel,
+      defaultModel: models.includes(defaultModel) ? defaultModel : "gpt-5.5",
       models,
       textRuntime,
       requiresOpenAiApiKeyForText:

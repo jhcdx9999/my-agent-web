@@ -267,7 +267,7 @@ const createTextCompletionWithSearchFallback = async (
 ) => {
   if (shouldUseCodexTextRuntime(messages)) {
     if (!options.apiKey) {
-      throw new HttpError(400, "请先在页面中配置你的 OpenAI API key，Codex 文本模式会使用你的 key。");
+      throw new HttpError(400, "请先在页面中配置你的 API Key，Codex 文本模式会使用你的 key。");
     }
 
     const codexMessages = shouldUseCodexNetwork() ? messages : await messagesWithWebSearchContext(messages, options.onProgress);
@@ -283,7 +283,7 @@ const createTextCompletionWithSearchFallback = async (
   }
 
   if (!options.apiKey) {
-    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
+    throw new HttpError(400, "请先在页面中配置你的 API Key。");
   }
 
   if (!options.shouldSearch) {
@@ -376,7 +376,7 @@ export const processChat = async (
     appConfig.codex.authMode === "user-api-key";
 
   if (requiresOpenAiApiKey && !apiKey) {
-    throw new HttpError(400, "请先在页面中配置你的 OpenAI API key。");
+    throw new HttpError(400, "请先在页面中配置你的 API Key。");
   }
 
   if (hasUploadedAttachments && appConfig.openai.textApi === "chat") {

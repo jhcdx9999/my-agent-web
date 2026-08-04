@@ -428,9 +428,9 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
       apiKeyPanelOpen: true,
       apiKeyError:
         state.textRuntime === "codex" && !state.requiresOpenAiApiKeyForText
-          ? "当前文本由 Codex 处理，但上传附件或生成图片仍需要 OpenAI API key。"
-          : "请先配置你的 OpenAI API key。",
-      statusText: "等待配置 OpenAI API key"
+          ? "当前文本由 Codex 处理，但上传附件或生成图片仍需要 API Key。"
+          : "请先配置你的 API Key。",
+      statusText: "等待配置 API Key"
     });
     return;
   }
@@ -575,23 +575,41 @@ function bindEvents(): void {
   bindAuthEvents();
 
   appRoot.addEventListener("click", (event) => {
-    if (!state.conversationMenuId) {
-      return;
-    }
-
     const target = event.target as Element | null;
-    if (target?.closest("[data-conversation-menu], .conversation-menu")) {
+
+    const shouldCloseConversationMenu =
+      state.conversationMenuId && !target?.closest("[data-conversation-menu], .conversation-menu");
+    const shouldCloseMobileMenu =
+      state.mobileMenuOpen && !target?.closest("[data-mobile-menu-toggle], .mobile-menu-panel");
+
+    if (shouldCloseConversationMenu || shouldCloseMobileMenu) {
+      updateState(
+        {
+          conversationMenuId: shouldCloseConversationMenu ? undefined : state.conversationMenuId,
+          mobileMenuOpen: shouldCloseMobileMenu ? false : state.mobileMenuOpen
+        },
+        { scroll: false }
+      );
       return;
     }
+  });
 
-    updateState({ conversationMenuId: undefined }, { scroll: false });
+  document.querySelector<HTMLButtonElement>("[data-mobile-menu-toggle]")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    updateState(
+      {
+        mobileMenuOpen: !state.mobileMenuOpen,
+        conversationMenuId: undefined
+      },
+      { scroll: false }
+    );
   });
 
   document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
     button.addEventListener("click", () => {
       const theme = button.dataset.themeChoice as AppState["theme"];
       applyTheme(theme);
-      updateState({ theme }, { scroll: false });
+      updateState({ theme, mobileMenuOpen: false }, { scroll: false });
     });
   });
 
@@ -599,7 +617,7 @@ function bindEvents(): void {
     button.addEventListener("click", () => {
       const conversationId = button.dataset.conversationId;
       if (conversationId && !state.pending) {
-        updateState({ conversationMenuId: undefined }, { scroll: false });
+        updateState({ conversationMenuId: undefined, mobileMenuOpen: false }, { scroll: false });
         void selectConversation(conversationId);
       }
     });
@@ -616,6 +634,7 @@ function bindEvents(): void {
       updateState(
         {
           conversationMenuId: state.conversationMenuId === conversationId ? undefined : conversationId,
+          mobileMenuOpen: Boolean(button.closest(".mobile-menu-panel")),
           renamingConversationId: undefined,
           renamingError: ""
         },
@@ -635,6 +654,7 @@ function bindEvents(): void {
       updateState(
         {
           conversationMenuId: undefined,
+          mobileMenuOpen: false,
           renamingConversationId: conversation.id,
           renamingTitle: conversation.title,
           renamingError: ""
@@ -662,6 +682,7 @@ function bindEvents(): void {
             editingMessageId: undefined,
             editingContent: "",
             conversationMenuId: undefined,
+            mobileMenuOpen: false,
             renamingConversationId: state.renamingConversationId === conversationId ? undefined : state.renamingConversationId,
             renamingTitle: state.renamingConversationId === conversationId ? "" : state.renamingTitle,
             renamingError: "",
@@ -724,61 +745,71 @@ function bindEvents(): void {
     }
   });
 
-  document.querySelector<HTMLButtonElement>("#newConversationButton")?.addEventListener("click", async () => {
-    if (state.pending) {
-      return;
-    }
+  document.querySelectorAll<HTMLButtonElement>("[data-new-conversation]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (state.pending) {
+        return;
+      }
 
-    try {
-      const conversation = await createConversation();
-      updateState({
-        activeConversationId: conversation.id,
-        conversations: upsertConversation(conversation),
-        messages: [],
-        pendingUploads: [],
-        editingMessageId: undefined,
-        editingContent: "",
-        statusText: "新对话已创建"
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateState({ statusText: `新建失败：${message}` });
-    }
-  });
-
-  document.querySelector<HTMLButtonElement>("#logoutButton")?.addEventListener("click", async () => {
-    activeRequestId += 1;
-    await logout().catch(() => undefined);
-    forgetAuth();
-    updateState({
-      user: undefined,
-      authToken: "",
-      authExpiresAt: undefined,
-      messages: [],
-      conversations: [],
-      activeConversationId: undefined,
-      pendingUploads: [],
-      apiKeyPanelOpen: false,
-      apiKeyError: "",
-      editingMessageId: undefined,
-      editingContent: "",
-      conversationMenuId: undefined,
-      renamingConversationId: undefined,
-      renamingTitle: "",
-      renamingError: "",
-      renamingSaving: false,
-      authError: ""
+      try {
+        const conversation = await createConversation();
+        updateState({
+          activeConversationId: conversation.id,
+          conversations: upsertConversation(conversation),
+          messages: [],
+          pendingUploads: [],
+          editingMessageId: undefined,
+          editingContent: "",
+          conversationMenuId: undefined,
+          mobileMenuOpen: false,
+          statusText: "新对话已创建"
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateState({ statusText: `新建失败：${message}` });
+      }
     });
   });
 
-  document.querySelector<HTMLButtonElement>("#toggleApiKeyPanel")?.addEventListener("click", () => {
-    updateState(
-      {
-        apiKeyPanelOpen: !state.apiKeyPanelOpen,
-        apiKeyError: ""
-      },
-      { scroll: false }
-    );
+  document.querySelectorAll<HTMLButtonElement>("#logoutButton, [data-logout]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      activeRequestId += 1;
+      await logout().catch(() => undefined);
+      forgetAuth();
+      updateState({
+        user: undefined,
+        authToken: "",
+        authExpiresAt: undefined,
+        messages: [],
+        conversations: [],
+        activeConversationId: undefined,
+        pendingUploads: [],
+        apiKeyPanelOpen: false,
+        mobileMenuOpen: false,
+        apiKeyError: "",
+        editingMessageId: undefined,
+        editingContent: "",
+        conversationMenuId: undefined,
+        renamingConversationId: undefined,
+        renamingTitle: "",
+        renamingError: "",
+        renamingSaving: false,
+        authError: ""
+      });
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-toggle-api-key-panel]").forEach((button) => {
+    button.addEventListener("click", () => {
+      updateState(
+        {
+          apiKeyPanelOpen: !state.apiKeyPanelOpen,
+          mobileMenuOpen: false,
+          apiKeyError: ""
+        },
+        { scroll: false }
+      );
+    });
   });
 
   document.querySelector<HTMLFormElement>("#apiKeyForm")?.addEventListener("submit", async (event) => {
@@ -795,8 +826,9 @@ function bindEvents(): void {
       updateState({
         apiKeySaving: false,
         apiKeyPanelOpen: false,
+        mobileMenuOpen: false,
         apiKeyError: "",
-        statusText: "OpenAI API key 已保存"
+        statusText: "API Key 已保存"
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
