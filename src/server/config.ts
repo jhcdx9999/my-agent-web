@@ -160,6 +160,7 @@ export const appConfig = {
   upload: {
     maxFiles: intFromEnv(process.env.MAX_UPLOAD_FILES, 5),
     maxBytesPerFile: intFromEnv(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
+    maxExtractedTextChars: intFromEnv(process.env.MAX_EXTRACTED_TEXT_CHARS, 12000),
     accept:
       "image/*,.pdf,.txt,.md,.csv,.json,.ts,.tsx,.js,.jsx,.html,.css,.xml,.yaml,.yml,.log"
   }

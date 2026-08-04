@@ -8,6 +8,13 @@ import { saveCodeRun } from "./codeRunStore";
 import { writeGeneratedFile } from "./fileStore";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
 import { getUserOpenAiApiKey } from "./userConfigService";
+import {
+  attachmentTextForModel,
+  hasBinaryUploadedAttachment,
+  isSupportedUpload,
+  kindFromUpload,
+  materializeUploadedAttachmentText
+} from "./attachmentContentService";
 import { HttpError } from "../errors";
 import type { AuthUser, ChatAttachment, ChatMessage, ChatProgressEvent, ChatRequest, ChatResponse } from "../../shared/types";
 
@@ -25,38 +32,6 @@ const progressEvent = (
 });
 
 const getLatestPrompt = (messages: ChatMessage[]): string => messages[messages.length - 1]?.content ?? "";
-
-const supportedTextMimeTypes = new Set([
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "application/json",
-  "application/xml",
-  "text/html",
-  "text/css",
-  "text/javascript",
-  "application/javascript",
-  "application/x-yaml",
-  "text/yaml"
-]);
-
-const isSupportedUpload = (attachment: ChatAttachment): boolean =>
-  attachment.mimeType.startsWith("image/") ||
-  attachment.mimeType === "application/pdf" ||
-  supportedTextMimeTypes.has(attachment.mimeType) ||
-  /\.(txt|md|csv|json|ts|tsx|js|jsx|html|css|xml|yaml|yml|log)$/i.test(attachment.filename);
-
-const kindFromUpload = (attachment: ChatAttachment): ChatAttachment["kind"] => {
-  if (attachment.mimeType.startsWith("image/")) {
-    return "image";
-  }
-
-  if (attachment.mimeType === "application/pdf" || /\.pdf$/i.test(attachment.filename)) {
-    return "pdf";
-  }
-
-  return "file";
-};
 
 const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
   const uploadCount = messages.reduce(
@@ -96,6 +71,15 @@ const normalizeUploads = (messages: ChatMessage[]): ChatMessage[] => {
   }));
 };
 
+const contentWithAttachmentText = (message: Pick<ChatMessage, "content" | "attachments">): string => {
+  const attachmentText = message.attachments
+    ?.map(attachmentTextForModel)
+    .filter(Boolean)
+    .join("\n\n");
+
+  return attachmentText ? `${message.content}\n\n${attachmentText}` : message.content;
+};
+
 const compactMessagesForContext = (messages: ChatMessage[]) => {
   const selected: Array<{
     role: ChatMessage["role"];
@@ -113,9 +97,13 @@ const compactMessagesForContext = (messages: ChatMessage[]) => {
       continue;
     }
 
-    const content = message.content.slice(0, appConfig.safety.maxMessageChars);
-    const attachments = message.attachments?.filter((attachment) => attachment.source === "uploaded" && attachment.dataUrl);
-    const attachmentBudget = attachments?.reduce((sum, attachment) => sum + (attachment.filename.length + attachment.mimeType.length), 0) ?? 0;
+    const fullContent = contentWithAttachmentText(message);
+    const content = fullContent.slice(0, appConfig.safety.maxMessageChars);
+    const attachments = message.attachments?.filter(
+      (attachment) => attachment.source === "uploaded" && attachment.dataUrl
+    );
+    const attachmentBudget =
+      attachments?.reduce((sum, attachment) => sum + attachment.filename.length + attachment.mimeType.length, 0) ?? 0;
     const cost = content.length + attachmentBudget;
 
     if (selected.length > 0 && used + cost > maxContextChars) {
@@ -234,10 +222,7 @@ const withWebSearchContext = async (prompt: string, onProgress?: ChatProgressRep
 const needsWebSearch = (prompt: string): boolean => shouldUseWebSearch(prompt);
 
 const shouldUseCodexTextRuntime = (messages: ChatMessage[]): boolean =>
-  appConfig.ai.textRuntime === "codex" &&
-  !messages.some((message) =>
-    message.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
-  );
+  appConfig.ai.textRuntime === "codex" && !hasBinaryUploadedAttachment(messages);
 
 const shouldUseCodexNetwork = (): boolean =>
   ["1", "true", "yes", "on", "enabled"].includes(appConfig.codex.networkAccess.trim().toLowerCase());
@@ -337,20 +322,36 @@ const messagesWithWebSearchContext = async (
   ];
 };
 
+export type ProcessChatResponse = ChatResponse & {
+  historyMessages: ChatMessage[];
+};
+
 export const processChat = async (
   request: ChatRequest,
   user: AuthUser,
   onProgress?: ChatProgressReporter
-): Promise<ChatResponse> => {
+): Promise<ProcessChatResponse> => {
   const normalizedMessages = normalizeUploads(request.messages);
   onProgress?.(progressEvent("正在分析请求", "正在识别任务类型、模型、附件和会话上下文。", "thinking"));
 
   if (request.paused) {
     return {
       intent: "chat",
+      historyMessages: normalizedMessages,
       message: createAssistantMessage("对话已暂停。点击继续后，我会接着处理你的下一条消息。")
     };
   }
+
+  const hasAnyUploadedAttachments = normalizedMessages.some((message) =>
+    message.attachments?.some((attachment) => attachment.source === "uploaded")
+  );
+  if (hasAnyUploadedAttachments) {
+    onProgress?.(progressEvent("正在读取附件", "正在整理上传的图片、PDF 或文件内容。", "file"));
+  }
+
+  const materializedMessages = await materializeUploadedAttachmentText(normalizedMessages, (title, detail, kind) =>
+    onProgress?.(progressEvent(title, detail, kind ?? "file"))
+  );
 
   const openAiModel = appConfig.openai.models.includes(request.model)
     ? request.model
@@ -359,15 +360,13 @@ export const processChat = async (
     ? request.model
     : appConfig.codex.defaultModel;
   const apiKey = await getUserOpenAiApiKey(user);
-  const intent = detectIntent(normalizedMessages);
-  const latestPrompt = getLatestPrompt(normalizedMessages);
-  const latestMessage = normalizedMessages[normalizedMessages.length - 1];
+  const intent = detectIntent(materializedMessages);
+  const latestPrompt = getLatestPrompt(materializedMessages);
+  const latestMessage = materializedMessages[materializedMessages.length - 1];
   const latestHasUploadedAttachments = Boolean(
     latestMessage?.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
   );
-  const hasUploadedAttachments = normalizedMessages.some((message) =>
-    message.attachments?.some((attachment) => attachment.source === "uploaded" && attachment.dataUrl)
-  );
+  const hasUploadedAttachments = hasBinaryUploadedAttachment(materializedMessages);
   const textModel = appConfig.ai.textRuntime === "codex" && !hasUploadedAttachments ? codexModel : openAiModel;
   const requiresOpenAiApiKey =
     intent === "image" ||
@@ -383,10 +382,6 @@ export const processChat = async (
     throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
-  if (hasUploadedAttachments) {
-    onProgress?.(progressEvent("正在读取附件", "正在整理上传的图片、PDF 或文件内容。", "file"));
-  }
-
   if (intent === "image" && !latestHasUploadedAttachments) {
     onProgress?.(progressEvent("正在生成图片", "正在把提示词发送给图像模型。", "image"));
     const image = await generateImage(latestPrompt, apiKey!);
@@ -399,6 +394,7 @@ export const processChat = async (
 
     return {
       intent,
+      historyMessages: materializedMessages,
       message: createAssistantMessage("图片已经生成，可以在下方直接预览，也可以右键保存。", [
         {
           ...attachment,
@@ -432,6 +428,7 @@ export const processChat = async (
 
     return {
       intent,
+      historyMessages: materializedMessages,
       usage: {
         promptTokens: completion.usage?.prompt_tokens,
         completionTokens: completion.usage?.completion_tokens,
@@ -470,6 +467,7 @@ export const processChat = async (
 
     return {
       intent,
+      historyMessages: materializedMessages,
       usage: {
         promptTokens: codeCompletion.usage?.prompt_tokens,
         completionTokens: codeCompletion.usage?.completion_tokens,
@@ -485,7 +483,7 @@ export const processChat = async (
   }
 
   const shouldSearch = needsWebSearch(latestPrompt);
-  const completion = await createTextCompletionWithSearchFallback(normalizedMessages, textModel, {
+  const completion = await createTextCompletionWithSearchFallback(materializedMessages, textModel, {
     apiKey,
     shouldSearch,
     user,
@@ -494,6 +492,7 @@ export const processChat = async (
 
   return {
     intent,
+    historyMessages: materializedMessages,
     usage: {
       promptTokens: completion.usage?.prompt_tokens,
       completionTokens: completion.usage?.completion_tokens,

@@ -39,6 +39,7 @@ const stripAttachmentPayload = (attachment: ChatAttachment): ChatAttachment => (
   source: attachment.source,
   url: attachment.url,
   previewUrl: attachment.source === "uploaded" ? undefined : attachment.previewUrl,
+  textContent: attachment.textContent,
   description: attachment.description,
   sizeBytes: attachment.sizeBytes
 });

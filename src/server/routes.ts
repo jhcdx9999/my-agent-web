@@ -217,10 +217,15 @@ export const createRouter = (): express.Router => {
       const user = await authenticateToken(tokenFromRequest(request));
       const body = chatRequestFromBody(request.body as Partial<ChatRequest>);
       const chatResponse = await processChat(body, user);
-      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
+      const conversation = await saveConversation(
+        user,
+        [...chatResponse.historyMessages, chatResponse.message],
+        body.conversationId
+      );
+      const { historyMessages: _historyMessages, ...publicResponse } = chatResponse;
 
       sendJson(response, {
-        ...chatResponse,
+        ...publicResponse,
         conversation
       });
     } catch (error) {
@@ -258,10 +263,15 @@ export const createRouter = (): express.Router => {
         kind: "done",
         createdAt: new Date().toISOString()
       });
-      const conversation = await saveConversation(user, [...body.messages, chatResponse.message], body.conversationId);
+      const conversation = await saveConversation(
+        user,
+        [...chatResponse.historyMessages, chatResponse.message],
+        body.conversationId
+      );
+      const { historyMessages: _historyMessages, ...publicResponse } = chatResponse;
 
       sendSse(response, "done", {
-        ...chatResponse,
+        ...publicResponse,
         conversation
       });
       response.end();

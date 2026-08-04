@@ -335,6 +335,16 @@ const hasNewUploads = (messages: ChatMessage[]): boolean =>
     message.attachments?.some((attachment) => attachment.source === "uploaded" && Boolean(attachment.dataUrl))
   );
 
+const hasNewImageUploads = (messages: ChatMessage[]): boolean =>
+  messages.some((message) =>
+    message.attachments?.some(
+      (attachment) =>
+        attachment.source === "uploaded" &&
+        Boolean(attachment.dataUrl) &&
+        (attachment.kind === "image" || attachment.mimeType.startsWith("image/"))
+    )
+  );
+
 const compactAttachmentForState = (attachment: ChatAttachment): ChatAttachment => {
   if (attachment.source !== "uploaded") {
     return attachment;
@@ -347,6 +357,7 @@ const compactAttachmentForState = (attachment: ChatAttachment): ChatAttachment =
     mimeType: attachment.mimeType,
     source: attachment.source,
     url: attachment.url,
+    textContent: attachment.textContent,
     description: attachment.description,
     sizeBytes: attachment.sizeBytes
   };
@@ -421,7 +432,8 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
   const requestId = activeRequestId + 1;
   activeRequestId = requestId;
   const latestPrompt = getLatestUserPrompt(nextMessages);
-  const requiresOpenAiApiKey = state.requiresOpenAiApiKeyForText || hasNewUploads(nextMessages) || promptNeedsImage(latestPrompt);
+  const requiresOpenAiApiKey =
+    state.requiresOpenAiApiKeyForText || hasNewImageUploads(nextMessages) || promptNeedsImage(latestPrompt);
 
   if (requiresOpenAiApiKey && !state.user?.hasOpenAiApiKey) {
     updateState({
