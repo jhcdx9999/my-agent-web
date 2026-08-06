@@ -7,7 +7,7 @@ import { runLocalDataCode } from "./dataRunner";
 import { saveCodeRun } from "./codeRunStore";
 import { writeGeneratedFile } from "./fileStore";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
-import { getUserOpenAiApiKey } from "./userConfigService";
+import { getUserOpenAiConfig } from "./userConfigService";
 import {
   attachmentTextForModel,
   hasBinaryUploadedAttachment,
@@ -258,7 +258,7 @@ const isHostedWebSearchFailure = (error: unknown): boolean => {
 const createTextCompletionWithSearchFallback = async (
   messages: ChatMessage[],
   model: string,
-  options: { apiKey?: string; shouldSearch: boolean; user: AuthUser; onProgress?: ChatProgressReporter }
+  options: { apiKey?: string; baseUrl?: string; shouldSearch: boolean; user: AuthUser; onProgress?: ChatProgressReporter }
 ) => {
   if (shouldUseCodexTextRuntime(messages)) {
     if (!options.apiKey) {
@@ -283,7 +283,11 @@ const createTextCompletionWithSearchFallback = async (
 
   if (!options.shouldSearch) {
     options.onProgress?.(progressEvent("正在请求模型", `正在调用 ${model} 生成回复。`, "thinking"));
-    return createTextCompletion(toApiMessages(messages), model, { apiKey: options.apiKey, webSearch: false });
+    return createTextCompletion(toApiMessages(messages), model, {
+      apiKey: options.apiKey,
+      baseUrl: options.baseUrl,
+      webSearch: false
+    });
   }
 
   if (shouldTryHostedWebSearch(true)) {
@@ -291,6 +295,7 @@ const createTextCompletionWithSearchFallback = async (
       options.onProgress?.(progressEvent("正在联网搜索", "正在使用模型内置 web_search 工具。", "search"));
       return await createTextCompletion(toApiMessages(messages), model, {
         apiKey: options.apiKey,
+        baseUrl: options.baseUrl,
         webSearch: true
       });
     } catch (error) {
@@ -309,6 +314,7 @@ const createTextCompletionWithSearchFallback = async (
   options.onProgress?.(progressEvent("正在整理搜索结果", "正在把检索到的来源放入回答上下文。", "search"));
   return createTextCompletion(toApiMessages(await messagesWithWebSearchContext(messages, options.onProgress)), model, {
     apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
     webSearch: false
   });
 };
@@ -369,7 +375,8 @@ export const processChat = async (
   const codexModel = appConfig.codex.models.includes(request.model)
     ? request.model
     : appConfig.codex.defaultModel;
-  const apiKey = await getUserOpenAiApiKey(user);
+  const openAiConfig = await getUserOpenAiConfig(user);
+  const apiKey = openAiConfig.apiKey;
   const intent = detectIntent(materializedMessages);
   const latestPrompt = getLatestPrompt(materializedMessages);
   const imageReferences = uploadedImagesForImageTask(materializedMessages);
@@ -401,8 +408,8 @@ export const processChat = async (
     );
     const image =
       imageReferences.length > 0
-        ? await editImage(latestPrompt, imageReferences, apiKey!)
-        : await generateImage(latestPrompt, apiKey!);
+        ? await editImage(latestPrompt, imageReferences, openAiConfig)
+        : await generateImage(latestPrompt, openAiConfig);
     onProgress?.(progressEvent("正在保存图片", "图片已生成，正在写入可下载文件。", "image"));
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,
@@ -433,6 +440,7 @@ export const processChat = async (
     }];
     const completion = await createTextCompletionWithSearchFallback(fileMessages, textModel, {
       apiKey,
+      baseUrl: openAiConfig.baseUrl,
       shouldSearch,
       user,
       onProgress
@@ -467,6 +475,7 @@ export const processChat = async (
     }];
     const codeCompletion = await createTextCompletionWithSearchFallback(dataMessages, textModel, {
       apiKey,
+      baseUrl: openAiConfig.baseUrl,
       shouldSearch,
       user,
       onProgress
@@ -503,6 +512,7 @@ export const processChat = async (
   const shouldSearch = needsWebSearch(latestPrompt);
   const completion = await createTextCompletionWithSearchFallback(materializedMessages, textModel, {
     apiKey,
+    baseUrl: openAiConfig.baseUrl,
     shouldSearch,
     user,
     onProgress

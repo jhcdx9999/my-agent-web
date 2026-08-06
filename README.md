@@ -35,7 +35,7 @@ npm run dev
 复制 `.env.example` 为 `.env`，并配置：
 
 ```ini
-OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_BASE_URL=https://www.ai-dingyue.com
 AI_TEXT_RUNTIME=openai
 OPENAI_TEXT_API=responses
 OPENAI_DEFAULT_MODEL=gpt-5.5
@@ -46,7 +46,7 @@ CODEX_COMMAND=codex
 CODEX_AUTH_MODE=user-api-key
 CODEX_CONFIG_TEMPLATE=
 CODEX_MODEL_PROVIDER=OpenAI
-CODEX_PROVIDER_BASE_URL=https://api.openai.com/v1
+CODEX_PROVIDER_BASE_URL=https://www.ai-dingyue.com
 CODEX_API_KEY_ENV=OPENAI_API_KEY
 CODEX_WIRE_API=responses
 CODEX_SUPPORTS_WEBSOCKETS=false
@@ -65,7 +65,8 @@ CODEX_APPROVAL_POLICY=on-request
 
 OPENAI_IMAGE_MODEL=gpt-image-2
 OPENAI_IMAGE_SIZE=1024x1024
-OPENAI_IMAGE_QUALITY=auto
+OPENAI_IMAGE_EDIT_SIZE=1024x1536
+OPENAI_IMAGE_QUALITY=high
 OPENAI_IMAGE_FORMAT=png
 
 REQUEST_BODY_LIMIT=35mb
@@ -78,13 +79,13 @@ DOMINANT_USERS_FILE=a.json
 ENABLE_WEB_SEARCH=true
 WEB_SEARCH_PROVIDER=auto
 WEB_SEARCH_MAX_RESULTS=5
-OPENAI_WEB_SEARCH_TOOL=true
+OPENAI_WEB_SEARCH_TOOL=false
 SERPER_API_KEY=
 BRAVE_SEARCH_API_KEY=
 TAVILY_API_KEY=
 ```
 
-OpenAI API key 不再配置在 `.env` 中，而是按用户保存在根目录 `a.json`。如果 `a.json` 中没有某个用户的 `openaiApiKey`，该用户登录后页面会要求输入；用户可重复输入并覆盖旧 key。
+OpenAI API key 不再配置在 `.env` 中，而是按登录模式保存：`AUTH_MODE=dominant` 时读写根目录 `a.json`，`AUTH_MODE=free` 时读写 `storage/auth/users.json`。如果当前用户记录里没有 `openaiApiKey`，登录后页面会要求输入；用户可重复输入并覆盖旧 key。
 每个用户都会有独立 `uid`，格式是 `u` 加 6 位随机数字，例如 `u123456`。后端会确保它不和 `a.json`、`storage/auth/users.json` 中已有 uid 重复，并优先按 uid 检索该用户的账号、密码信息和 `openaiApiKey`。
 
 `AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`，适合官方 OpenAI 或 OpenAI-compatible 第三方代理。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，网页模型下拉会显示 `CODEX_MODELS`。Codex 模式下的 provider 由 `CODEX_PROVIDER_BASE_URL`、`CODEX_WIRE_API`、`CODEX_SUPPORTS_WEBSOCKETS` 等变量生成到每个用户自己的 `storage/users/<user>/codex-home/config.toml`；如果设置了 `CODEX_CONFIG_TEMPLATE`，则直接复制该模板文件。
@@ -136,7 +137,9 @@ CODEX_APPROVAL_POLICY=on-request
     "username": "alice",
     "passwordHash": "...",
     "salt": "...",
-    "createdAt": "2026-08-03T00:00:00.000Z"
+    "createdAt": "2026-08-03T00:00:00.000Z",
+    "openaiApiKey": "",
+    "openaiBaseUrl": "https://www.ai-dingyue.com"
   }
 }
 ```
@@ -154,7 +157,8 @@ cp a.example.json a.json
   "u000001": {
     "username": "admin",
     "password": "your-strong-password",
-    "openaiApiKey": ""
+    "openaiApiKey": "",
+    "openaiBaseUrl": "https://www.ai-dingyue.com"
   }
 }
 ```
@@ -166,15 +170,16 @@ cp a.example.json a.json
   "u000001": {
     "username": "admin",
     "password": "your-strong-password",
-    "openaiApiKey": ""
+    "openaiApiKey": "",
+    "openaiBaseUrl": "https://www.ai-dingyue.com"
   }
 }
 ```
 
 每个 dominant 账号仍会按用户隔离保存历史对话。默认用户目录现在使用 `uid`，例如 `storage/users/u123456/`；如果旧账号没有 `uid`，后端会自动补一个不重复的 uid。
 
-`openaiApiKey` 可以为空。为空时，用户登录后在网页中输入自己的 key，后端会写回 `a.json`；再次输入会覆盖旧 key。
-`AUTH_MODE=free` 下用户自行注册时，后端也会生成唯一 uid，并把该用户的 `uid`、账号名、密码哈希、salt 和 `openaiApiKey` 记录/同步到 `a.json`。不会在 `a.json` 中保存 free 用户明文密码。`a.json` 和 `storage/auth/users.json` 中的 uid 共享同一个唯一命名空间，不能重复。
+`openaiApiKey` 可以为空。为空时，用户登录后在网页中输入自己的 key；`dominant` 模式会写回 `a.json`，`free` 模式会写回 `storage/auth/users.json`，再次输入会覆盖旧 key。若某个用户需要单独使用第三方中转地址，可在该 uid 下添加 `openaiBaseUrl`（也兼容 `baseUrl` / `apiBaseUrl`），例如 `"openaiBaseUrl": "https://www.ai-dingyue.com"`；未配置时回退 `.env` 的 `OPENAI_BASE_URL`。
+`AUTH_MODE=free` 下用户自行注册时，后端会在 `storage/auth/users.json` 里生成唯一 uid，并保存账号名、密码哈希、salt、`openaiApiKey` 和 `openaiBaseUrl`。free 模式不会再把用户配置同步到 `a.json`；`a.json` 和 `storage/auth/users.json` 中的 uid 仍共享同一个唯一命名空间，不能重复。
 
 ## Ubuntu 运行
 

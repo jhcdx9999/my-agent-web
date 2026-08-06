@@ -177,6 +177,9 @@ const renderApiKeyButton = (state: AppState): string => `
   </button>
 `;
 
+const apiKeyStorageTarget = (state: AppState): string =>
+  state.authLoginMode === "dominant" ? "a.json" : "storage/auth/users.json";
+
 const renderConversation = (
   conversation: ConversationSummary,
   activeConversationId: string | undefined,
@@ -393,7 +396,7 @@ export const renderApp = (state: AppState): string => {
                         : state.requiresOpenAiApiKeyForText
                           ? "文本对话、图片和上传能力会使用该密钥。"
                           : "Codex 文本模式下可选；生成图片或分析图片/PDF/文件时仍会使用。"
-                    }密钥只保存在服务器根目录 a.json。</span>
+                    }API Key 会保存到 ${escapeHtml(apiKeyStorageTarget(state))}。</span>
                   </div>
                   <input
                     id="openAiApiKeyInput"

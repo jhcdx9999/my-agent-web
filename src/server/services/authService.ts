@@ -22,6 +22,11 @@ type StoredUser = {
   passwordHash: string;
   salt: string;
   createdAt: string;
+  openaiApiKey?: string;
+  apiKey?: string;
+  openaiBaseUrl?: string;
+  baseUrl?: string;
+  apiBaseUrl?: string;
 };
 
 type StoredUsersFile =
@@ -350,7 +355,9 @@ export const registerUser = async (request: AuthRequest): Promise<AuthResponse> 
     username,
     salt,
     passwordHash: await scrypt(password, salt),
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    openaiApiKey: "",
+    openaiBaseUrl: appConfig.openai.baseUrl
   };
   users.push(user);
   await writeUsers(users);

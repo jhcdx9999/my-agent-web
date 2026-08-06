@@ -46,7 +46,7 @@ const pathFromEnv = (value: string | undefined): string => {
 };
 
 const defaultModel = "gpt-5.5";
-const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
+const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://www.ai-dingyue.com").replace(/\/$/, "");
 const authMode: AuthLoginMode = process.env.AUTH_MODE === "dominant" ? "dominant" : "free";
 const textRuntime: TextRuntime = process.env.AI_TEXT_RUNTIME === "codex" ? "codex" : "openai";
 const codexAuthMode = process.env.CODEX_AUTH_MODE === "server-login" ? "server-login" : "user-api-key";
@@ -109,7 +109,8 @@ export const appConfig = {
     reasoningEffort,
     imageModel: process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-2",
     imageSize: process.env.OPENAI_IMAGE_SIZE ?? "1024x1024",
-    imageQuality: process.env.OPENAI_IMAGE_QUALITY ?? "auto",
+    imageEditSize: process.env.OPENAI_IMAGE_EDIT_SIZE ?? "1024x1536",
+    imageQuality: process.env.OPENAI_IMAGE_QUALITY ?? "high",
     imageFormat: process.env.OPENAI_IMAGE_FORMAT ?? "png"
   },
   codex: {

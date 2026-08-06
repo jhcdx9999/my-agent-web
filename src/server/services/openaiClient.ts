@@ -70,6 +70,7 @@ type ResponsesTool = {
 
 type OpenAiRequestOptions = {
   apiKey: string;
+  baseUrl?: string;
   webSearch?: boolean;
 };
 
@@ -82,6 +83,8 @@ type ImageResponse = {
     message?: string;
   };
 };
+
+const isGptImage2Model = (): boolean => appConfig.openai.imageModel.trim().toLowerCase() === "gpt-image-2";
 
 const requireApiKey = (apiKey: string): string => {
   const key = apiKey.trim();
@@ -118,7 +121,7 @@ const parseResponseJson = async <T>(response: Response): Promise<T> => {
 
 const formatOpenAiErrorMessage = (message: string): string =>
   /upstream request failed/i.test(message)
-    ? `${message}。如果这是联网搜索或文件理解任务，请确认 OPENAI_BASE_URL 对应服务支持 Responses API 的 web_search/input_image/input_file；如果这是图片生成或改图，请确认该服务支持 /images/generations、/images/edits 和当前 OPENAI_IMAGE_MODEL。`
+    ? `${message}。如果这是联网搜索或文件理解任务，请确认当前用户 baseUrl/OPENAI_BASE_URL 对应服务支持 Responses API 的 web_search/input_image/input_file；如果这是图片生成或改图，请确认该服务支持 /images/generations、/images/edits 和当前 OPENAI_IMAGE_MODEL。若提示包含撞击、爆炸、恐袭、真实建筑灾难等内容，上游安全策略也可能直接拒绝并隐藏真实错误。`
     : message;
 
 const parseNonJsonOpenAiError = (text: string): string => {
@@ -149,14 +152,19 @@ const parseNonJsonOpenAiError = (text: string): string => {
   return `OpenAI API returned non-JSON response: ${text.slice(0, 180)}`;
 };
 
-const callOpenAi = async (path: string, init: RequestInit): Promise<Response> => {
+const isUnsafeImageEditPrompt = (prompt: string): boolean =>
+  /(撞毁|撞击|爆炸|炸毁|坠毁|恐袭|袭击|燃烧|起火|倒塌|直升机.*撞|飞机.*撞|crash|collision|explode|explosion|terror|attack|burning|destroy)/i.test(prompt);
+
+const openAiBaseUrl = (baseUrl?: string): string => (baseUrl?.trim() || appConfig.openai.baseUrl).replace(/\/$/, "");
+
+const callOpenAi = async (path: string, init: RequestInit, baseUrl?: string): Promise<Response> => {
   try {
-    return await fetch(`${appConfig.openai.baseUrl}${path}`, init);
+    return await fetch(`${openAiBaseUrl(baseUrl)}${path}`, init);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new HttpError(
       502,
-      `无法连接 OpenAI 上游：${message}。请检查 OPENAI_BASE_URL、网络代理、防火墙和 API 服务可用性。`
+      `无法连接 OpenAI 上游：${message}。请检查当前用户 baseUrl/OPENAI_BASE_URL、网络代理、防火墙和 API 服务可用性。`
     );
   }
 };
@@ -273,7 +281,7 @@ const createChatCompletion = async (
       messages,
       temperature: 0.2
     })
-  });
+  }, options.baseUrl);
 
   const data = await parseResponseJson<ChatCompletionResponse>(response);
   const content = normalizeTextContent(data.choices?.[0]?.message?.content).trim();
@@ -339,7 +347,7 @@ const createResponsesCompletion = async (
         : {}),
       ...(hasAttachments ? { truncation: "auto" } : {})
     })
-  });
+  }, options.baseUrl);
 
   const data = await parseResponseJson<ResponsesApiResponse>(response);
   const content =
@@ -375,11 +383,26 @@ export const createTextCompletion = async (
 
 export const generateImage = async (
   prompt: string,
-  apiKey: string
+  options: { apiKey: string; baseUrl?: string } | string
 ): Promise<{ buffer: Buffer; mimeType: string; extension: "png" | "jpg" | "webp" }> => {
+  const apiKey = typeof options === "string" ? options : options.apiKey;
+  const baseUrl = typeof options === "string" ? undefined : options.baseUrl;
   const outputFormat = appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat;
   const extension = outputFormat === "jpg" ? "jpg" : outputFormat === "webp" ? "webp" : "png";
   const mimeType = extension === "jpg" ? "image/jpeg" : `image/${extension}`;
+
+  const body: Record<string, string> = {
+    model: appConfig.openai.imageModel,
+    prompt,
+    size: appConfig.openai.imageSize,
+    quality: appConfig.openai.imageQuality
+  };
+
+  // ai-dingyue's verified gpt-image-2 path follows the SDK payload and rejects extra image-format fields.
+  if (!isGptImage2Model()) {
+    body.response_format = "b64_json";
+    body.output_format = extension === "jpg" ? "jpeg" : extension;
+  }
 
   const response = await callOpenAi("/images/generations", {
     method: "POST",
@@ -387,15 +410,8 @@ export const generateImage = async (
       Authorization: `Bearer ${requireApiKey(apiKey)}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model: appConfig.openai.imageModel,
-      prompt,
-      size: appConfig.openai.imageSize,
-      quality: appConfig.openai.imageQuality,
-      response_format: "b64_json",
-      output_format: extension === "jpg" ? "jpeg" : extension
-    })
-  });
+    body: JSON.stringify(body)
+  }, baseUrl);
 
   const data = await parseResponseJson<ImageResponse>(response);
   const item = data.data?.[0];
@@ -426,8 +442,10 @@ export const generateImage = async (
 export const editImage = async (
   prompt: string,
   images: ChatAttachment[],
-  apiKey: string
+  options: { apiKey: string; baseUrl?: string } | string
 ): Promise<{ buffer: Buffer; mimeType: string; extension: "png" | "jpg" | "webp" }> => {
+  const apiKey = typeof options === "string" ? options : options.apiKey;
+  const baseUrl = typeof options === "string" ? undefined : options.baseUrl;
   const outputFormat = appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat;
   const extension = outputFormat === "jpg" ? "jpg" : outputFormat === "webp" ? "webp" : "png";
   const mimeType = extension === "jpg" ? "image/jpeg" : `image/${extension}`;
@@ -440,17 +458,20 @@ export const editImage = async (
   );
 
   if (imageAttachments.length === 0) {
-    return generateImage(prompt, apiKey);
+    return generateImage(prompt, { apiKey, baseUrl });
   }
 
   form.set("model", appConfig.openai.imageModel);
   form.set("prompt", prompt);
-  form.set("size", appConfig.openai.imageSize);
+  form.set("size", appConfig.openai.imageEditSize);
   form.set("quality", appConfig.openai.imageQuality);
-  form.set("response_format", "b64_json");
-  form.set("output_format", extension === "jpg" ? "jpeg" : extension);
 
-  const imageFieldName = imageAttachments.length > 1 ? "image[]" : "image";
+  // Keep gpt-image-2 edits aligned with the SDK payload: model, image, prompt, size, quality.
+  if (!isGptImage2Model()) {
+    form.set("response_format", "b64_json");
+    form.set("output_format", extension === "jpg" ? "jpeg" : extension);
+  }
+
   for (const attachment of imageAttachments) {
     const buffer = attachment.dataUrl ? dataUrlToBuffer(attachment.dataUrl) : undefined;
     if (!buffer) {
@@ -458,21 +479,45 @@ export const editImage = async (
     }
 
     form.append(
-      imageFieldName,
+      "image",
       new Blob([buffer], { type: attachment.mimeType || "image/png" }),
       attachment.filename || `image.${extension}`
     );
   }
 
-  const response = await callOpenAi("/images/edits", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${requireApiKey(apiKey)}`
-    },
-    body: form
-  });
+  let response: Response;
+  try {
+    response = await callOpenAi("/images/edits", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${requireApiKey(apiKey)}`
+      },
+      body: form
+    }, baseUrl);
+  } catch (error) {
+    if (isUnsafeImageEditPrompt(prompt) && error instanceof HttpError) {
+      throw new HttpError(
+        error.statusCode,
+        `${error.message}。这次提示包含撞击/毁坏类灾难画面，图像上游可能被安全策略拒绝。可以改成非真实伤亡灾难的安全表述，例如“添加两架直升机在远处盘旋，画面有电影感烟雾但不发生撞击”。`,
+        error.details
+      );
+    }
+    throw error;
+  }
 
-  const data = await parseResponseJson<ImageResponse>(response);
+  let data: ImageResponse;
+  try {
+    data = await parseResponseJson<ImageResponse>(response);
+  } catch (error) {
+    if (isUnsafeImageEditPrompt(prompt) && error instanceof HttpError) {
+      throw new HttpError(
+        error.statusCode,
+        `${error.message}。这次提示包含撞击/毁坏类灾难画面，图像上游可能被安全策略拒绝。可以改成非真实伤亡灾难的安全表述，例如“添加两架直升机在远处盘旋，画面有电影感烟雾但不发生撞击”。`,
+        error.details
+      );
+    }
+    throw error;
+  }
   const item = data.data?.[0];
 
   if (item?.b64_json) {

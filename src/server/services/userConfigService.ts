@@ -18,8 +18,17 @@ export type DominantUserRecord = {
   createdAt?: string;
   openaiApiKey?: string;
   apiKey?: string;
+  openaiBaseUrl?: string;
+  baseUrl?: string;
+  apiBaseUrl?: string;
 };
 
+type UserConfigFile = {
+  wrapper: "uid-map" | "array" | "users" | "accounts";
+  users: DominantUserRecord[];
+};
+
+const freeUsersFile = path.join(appConfig.authDir, "users.json");
 const normalizeUsername = (username: string): string => username.trim().toLowerCase();
 const uidPattern = /^u\d{6}$/;
 
@@ -58,7 +67,7 @@ const recordsFromUidMap = (record: Record<string, unknown>): DominantUserRecord[
       uid: normalizeUid(String(user.uid ?? "")) ?? normalizeUid(uid) ?? String(user.uid ?? uid)
     }));
 
-const normalizeConfig = (value: unknown): { wrapper: "uid-map" | "array" | "users" | "accounts"; users: DominantUserRecord[] } => {
+const normalizeConfig = (value: unknown): UserConfigFile => {
   if (Array.isArray(value)) {
     return { wrapper: "array", users: value.filter(isRecord) as DominantUserRecord[] };
   }
@@ -94,9 +103,9 @@ const normalizeConfig = (value: unknown): { wrapper: "uid-map" | "array" | "user
   return { wrapper: "uid-map", users: recordsFromUidMap(value) };
 };
 
-const readRawUserConfig = async (): Promise<{ wrapper: "uid-map" | "array" | "users" | "accounts"; users: DominantUserRecord[] }> => {
+const readRawConfigFile = async (filePath: string): Promise<UserConfigFile> => {
   try {
-    const raw = await fs.readFile(appConfig.dominantUsersFile, "utf8");
+    const raw = await fs.readFile(filePath, "utf8");
     const cleaned = raw.replace(/^\uFEFF/, "").trim();
     return cleaned ? normalizeConfig(JSON.parse(cleaned) as unknown) : { wrapper: "uid-map", users: [] };
   } catch (error) {
@@ -108,11 +117,14 @@ const readRawUserConfig = async (): Promise<{ wrapper: "uid-map" | "array" | "us
   }
 };
 
-const writeRawUserConfig = async (config: {
-  wrapper: "uid-map" | "array" | "users" | "accounts";
-  users: DominantUserRecord[];
-}): Promise<void> => {
-  await ensureDirectory(path.dirname(appConfig.dominantUsersFile));
+const readRawUserConfig = (): Promise<UserConfigFile> =>
+  readRawConfigFile(appConfig.dominantUsersFile);
+
+const readRawFreeUserConfig = (): Promise<UserConfigFile> =>
+  readRawConfigFile(freeUsersFile);
+
+const writeRawConfigFile = async (filePath: string, config: UserConfigFile): Promise<void> => {
+  await ensureDirectory(path.dirname(filePath));
   const value = Object.fromEntries(
     config.users.map((user) => {
       const uid = normalizeUid(user.uid) ?? allocateUidForConfig(config);
@@ -122,14 +134,17 @@ const writeRawUserConfig = async (config: {
     })
   );
 
-  await fs.writeFile(appConfig.dominantUsersFile, `${JSON.stringify(value, null, 2)}\n`);
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 };
 
-const ensureConfigUids = (config: {
-  wrapper: "uid-map" | "array" | "users" | "accounts";
-  users: DominantUserRecord[];
-}): boolean => {
-  const used = new Set<string>();
+const writeRawUserConfig = (config: UserConfigFile): Promise<void> =>
+  writeRawConfigFile(appConfig.dominantUsersFile, config);
+
+const writeRawFreeUserConfig = (config: UserConfigFile): Promise<void> =>
+  writeRawConfigFile(freeUsersFile, config);
+
+const ensureConfigUids = (config: UserConfigFile, reserved: Set<string> = new Set()): boolean => {
+  const used = new Set<string>(reserved);
   let changed = false;
 
   for (const user of config.users) {
@@ -150,10 +165,7 @@ const ensureConfigUids = (config: {
   return changed;
 };
 
-const readUserConfig = async (options: { ensureUids?: boolean } = {}): Promise<{
-  wrapper: "uid-map" | "array" | "users" | "accounts";
-  users: DominantUserRecord[];
-}> => {
+const readUserConfig = async (options: { ensureUids?: boolean } = {}): Promise<UserConfigFile> => {
   const config = await readRawUserConfig();
   if (options.ensureUids && ensureConfigUids(config)) {
     await writeRawUserConfig(config);
@@ -161,6 +173,26 @@ const readUserConfig = async (options: { ensureUids?: boolean } = {}): Promise<{
 
   return config;
 };
+
+const readFreeUserConfig = async (options: { ensureUids?: boolean } = {}): Promise<UserConfigFile> => {
+  const config = await readRawFreeUserConfig();
+  const dominantConfig = options.ensureUids ? await readUserConfig({ ensureUids: true }) : undefined;
+  const reservedUids = new Set(
+    dominantConfig?.users.map((user) => normalizeUid(user.uid)).filter((uid): uid is string => Boolean(uid)) ?? []
+  );
+
+  if (options.ensureUids && ensureConfigUids(config, reservedUids)) {
+    await writeRawFreeUserConfig(config);
+  }
+
+  return config;
+};
+
+const readActiveUserConfig = (options: { ensureUids?: boolean } = {}): Promise<UserConfigFile> =>
+  appConfig.auth.mode === "dominant" ? readUserConfig(options) : readFreeUserConfig(options);
+
+const writeActiveUserConfig = (config: UserConfigFile): Promise<void> =>
+  appConfig.auth.mode === "dominant" ? writeRawUserConfig(config) : writeRawFreeUserConfig(config);
 
 export const readDominantUserRecords = async (options: { requireFile?: boolean } = {}): Promise<DominantUserRecord[]> => {
   const config = await readUserConfig({ ensureUids: true });
@@ -221,14 +253,43 @@ export const getUserConfigByUid = async (uid: string): Promise<DominantUserRecor
     throw new HttpError(400, "请输入有效的用户 uid。");
   }
 
-  const config = await readUserConfig({ ensureUids: true });
+  const config = await readActiveUserConfig({ ensureUids: true });
   return config.users.find((entry) => normalizeUid(entry.uid) === normalized);
 };
 
 export const getUserOpenAiApiKey = async (user: AuthUser): Promise<string> => {
-  const config = await readUserConfig({ ensureUids: true });
+  const config = await readActiveUserConfig({ ensureUids: true });
   const entry = config.users.find((item) => entryMatchesUser(item, user));
   return (entry?.openaiApiKey ?? entry?.apiKey ?? "").trim();
+};
+
+const normalizeBaseUrl = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim().replace(/\/$/, "");
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+      return undefined;
+    }
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+};
+
+export const getUserOpenAiConfig = async (
+  user: AuthUser
+): Promise<{ apiKey: string; baseUrl?: string }> => {
+  const config = await readActiveUserConfig({ ensureUids: true });
+  const entry = config.users.find((item) => entryMatchesUser(item, user));
+
+  return {
+    apiKey: (entry?.openaiApiKey ?? entry?.apiKey ?? "").trim(),
+    baseUrl: normalizeBaseUrl(entry?.openaiBaseUrl ?? entry?.baseUrl ?? entry?.apiBaseUrl)
+  };
 };
 
 export const userHasOpenAiApiKey = async (user: AuthUser): Promise<boolean> =>
@@ -240,29 +301,29 @@ export const saveUserOpenAiApiKey = async (user: AuthUser, apiKey: string): Prom
     throw new HttpError(400, "请输入有效的 API Key。");
   }
 
-  const config = await readUserConfig({ ensureUids: true });
+  const config = await readActiveUserConfig({ ensureUids: true });
   const existing = config.users.find((item) => entryMatchesUser(item, user));
 
   if (existing) {
     existing.uid = normalizeUid(existing.uid) ?? normalizeUid(user.uid) ?? allocateUidForConfig(config);
     existing.openaiApiKey = key;
     delete existing.apiKey;
+  } else if (appConfig.auth.mode === "free") {
+    throw new HttpError(401, "账号配置不存在，请重新登录后再配置 API Key。");
   } else {
     config.users.push({
       uid: normalizeUid(user.uid) ?? allocateUidForConfig(config),
       id: user.id,
       username: user.username,
-      openaiApiKey: key
+      openaiApiKey: key,
+      openaiBaseUrl: appConfig.openai.baseUrl
     });
   }
 
-  await writeRawUserConfig(config);
+  await writeActiveUserConfig(config);
 };
 
-const allocateUidForConfig = (config: {
-  wrapper: "uid-map" | "array" | "users" | "accounts";
-  users: DominantUserRecord[];
-}): string => {
+const allocateUidForConfig = (config: UserConfigFile): string => {
   const used = new Set(config.users.map((user) => normalizeUid(user.uid)).filter((uid): uid is string => Boolean(uid)));
   return generateUniqueUid(used);
 };
@@ -275,6 +336,10 @@ export const upsertRegisteredUserConfig = async (user: {
   salt: string;
   createdAt: string;
 }): Promise<void> => {
+  if (appConfig.auth.mode !== "dominant") {
+    return;
+  }
+
   const config = await readUserConfig({ ensureUids: true });
   const username = normalizeUsername(user.username);
   const uid = normalizeUid(user.uid) ?? allocateUidForConfig(config);
