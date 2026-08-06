@@ -327,11 +327,15 @@ const handleAuthSuccess = (response: AuthResponse, statusText: string): void => 
 const getLatestUserPrompt = (messages: ChatMessage[]): string =>
   [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
 
+const promptHasRasterOutputFormat = (prompt: string): boolean =>
+  /(\.?(png|jpe?g)\b|PNG|JPG|JPEG)/i.test(prompt);
+
 const promptNeedsImage = (prompt: string): boolean =>
-  /(生成|画|绘制|做一张|来一张|出图|改图|修图|修改|编辑|改为|改成|变成|换成|添加|加上|重新生成|再生成|create|generate|draw|edit|modify|海报|插画)/i.test(prompt);
+  promptHasRasterOutputFormat(prompt) ||
+  /(生成.*(图|图片|图像|照片|海报|插画)|画|绘制|做一张|来一张|出图|改图|修图|修改|编辑|改为|改成|变成|换成|添加|加上|重新生成|再生成|create.*image|generate.*image|draw|edit|modify|poster|illustration)/i.test(prompt);
 
 const promptNeedsFile = (prompt: string): boolean =>
-  /(生成|创建|导出|保存|下载|文件|文档|表格|csv|xlsx|json|txt|md|markdown|report|download|file)/i.test(prompt);
+  /(生成|创建|导出|保存|下载|文件|文档|表格|pdf|word|docx|ppt|pptx|powerpoint|excel|csv|xlsx|json|txt|md|markdown|html|png|jpe?g|report|download|file)/i.test(prompt);
 
 const promptNeedsSearch = (prompt: string): boolean =>
   /(最新|现在|目前|今天|昨日|昨天|明天|本周|本月|今年|实时|联网|搜索|查询|查一下|新闻|赛程|赛果|比分|排名|积分榜|世界杯|current|latest|today|news|score|schedule|standing|price|weather)/i.test(prompt);
@@ -536,10 +540,17 @@ const copyText = async (text: string): Promise<void> => {
 };
 
 const downloadUrl = (url: string, filename: string): void => {
+  const isLikelyMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (isLikelyMobile) {
+    window.open(url, "_blank", "noopener");
+    return;
+  }
+
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.rel = "noopener";
+  anchor.target = "_blank";
   document.body.append(anchor);
   anchor.click();
   anchor.remove();
@@ -871,7 +882,7 @@ function bindEvents(): void {
       const message = state.messages.find((item) => item.id === button.dataset.downloadMessage);
       const attachments = message?.attachments?.filter((attachment) => attachment.url) ?? [];
       attachments.forEach((attachment) => {
-        window.setTimeout(() => downloadUrl(attachment.url!, attachment.filename), 0);
+        downloadUrl(attachment.url!, attachment.filename);
       });
       updateState({ statusText: attachments.length ? "下载已开始" : "没有可下载附件" }, { scroll: false });
     });

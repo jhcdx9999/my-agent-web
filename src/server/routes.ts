@@ -330,6 +330,8 @@ export const createRouter = (): express.Router => {
 export const downloadsHandler: express.RequestHandler = (request, response, next) => {
   try {
     const filename = request.params.filename;
+    response.setHeader("Cache-Control", "private, max-age=86400");
+    response.setHeader("X-Content-Type-Options", "nosniff");
     response.download(getGeneratedFilePath(filename), filename);
   } catch (error) {
     next(error);

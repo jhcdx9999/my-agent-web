@@ -16,10 +16,15 @@ const imagePattern =
   /(生成|绘制|画一张|做一张|来一张|出图|海报|插画|改图|修图|修改|编辑|改为|改成|变成|换成|去掉|加上|添加|重新生成|再生成|create|generate|draw|poster|illustration|edit|modify|make.*image)/i;
 
 const imageEditWithUploadPattern =
-  /(改|修|编辑|改为|改成|变成|换成|去掉|加|添加|放入|替换|保留|生成|重新|再生成|飞机|直升机|楼|建筑|撞|撞击|坠毁|爆炸|烟|火|edit|modify|change|turn|replace|add|remove|generate|regenerate|crash|collision|explode|smoke|fire)/i;
+  /(改图|修图|编辑|改为|改成|变成|换成|去掉|加上|添加|放入|替换|保留|生成|重新|再生成|飞机|直升机|楼|建筑|撞|撞击|坠毁|爆炸|烟|火|edit|modify|change|turn|replace|add|remove|generate|regenerate|crash|collision|explode|smoke|fire)/i;
 
 const filePattern =
-  /(生成|创建|导出|写成|保存为|下载|文件|文档|表格|csv|xlsx|json|txt|md|markdown|report|download|file)/i;
+  /(生成|创建|导出|写成|保存为|下载|文件|文档|表格|pdf|word|docx|ppt|pptx|powerpoint|excel|csv|xlsx|json|txt|md|markdown|html|png|jpe?g|report|download|file)/i;
+
+const documentFormatPattern =
+  /(\.?(pdf|docx?|word|pptx?|powerpoint|xlsx?|excel|csv|json|txt|md|markdown|html)\b|PDF|Word|PPT|PPTX|PowerPoint|Excel|表格|文档|文件|下载)/i;
+
+const rasterFileFormatPattern = /(\.?(png|jpe?g)\b|PNG|JPG|JPEG)/i;
 
 const explicitDataCodePattern =
   /(用代码|运行代码|执行代码|生成代码|写代码|本地代码|保存代码|保留代码|code|script|programmatically|run code|execute code)/i;
@@ -40,8 +45,16 @@ export const detectIntent = (messages: ChatMessage[]): AssistantIntent => {
     return "chat";
   }
 
+  if (documentFormatPattern.test(latest)) {
+    return "file";
+  }
+
   if (latestMessage && hasUploadedImage(latestMessage) && imageEditWithUploadPattern.test(latest)) {
     return "image";
+  }
+
+  if (rasterFileFormatPattern.test(latest)) {
+    return "file";
   }
 
   if (imagePattern.test(latest)) {

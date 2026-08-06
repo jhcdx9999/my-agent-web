@@ -6,6 +6,7 @@ import { detectIntent } from "./intent";
 import { runLocalDataCode } from "./dataRunner";
 import { saveCodeRun } from "./codeRunStore";
 import { writeGeneratedFile } from "./fileStore";
+import { buildGeneratedFilePrompt, createGeneratedFile, detectGeneratedFileFormat } from "./generatedFileService";
 import { formatSearchContext, searchWeb, shouldUseWebSearch } from "./webSearchService";
 import { getUserOpenAiConfig } from "./userConfigService";
 import {
@@ -208,18 +209,6 @@ const createAssistantMessage = (
   createdAt: new Date().toISOString(),
   attachments
 });
-
-const buildFilePrompt = (userPrompt: string): string => `
-请根据用户要求生成一个可以保存为 Markdown 文档的完整内容。
-
-要求：
-- 直接输出文件正文。
-- 不要包裹三反引号。
-- 内容应结构清晰，适合用户下载后继续编辑。
-
-用户要求：
-${userPrompt}
-`.trim();
 
 const buildDataPlanPrompt = (userPrompt: string): string => `
 Generate JavaScript for a local data-analysis sandbox.
@@ -462,11 +451,19 @@ export const processChat = async (
 
   if (intent === "file") {
     const shouldSearch = needsWebSearch(latestPrompt);
-    onProgress?.(progressEvent("正在生成文件内容", "正在组织可下载文档的正文结构。", "file"));
+    const targetFormat = detectGeneratedFileFormat(latestPrompt);
+    const targetIsImage = targetFormat === "png" || targetFormat === "jpg";
+    onProgress?.(
+      progressEvent(
+        "正在生成文件内容",
+        `正在组织可下载 ${targetFormat.toUpperCase()} 文件的正文结构。`,
+        targetIsImage ? "image" : "file"
+      )
+    );
     const fileMessages: ChatMessage[] = [{
       id: createId("msg"),
       role: "user",
-      content: buildFilePrompt(latestPrompt),
+      content: buildGeneratedFilePrompt(latestPrompt, targetFormat),
       createdAt: new Date().toISOString()
     }];
     const completion = await createTextCompletionWithSearchFallback(fileMessages, textModel, {
@@ -476,11 +473,22 @@ export const processChat = async (
       user,
       onProgress
     });
-    onProgress?.(progressEvent("正在保存文件", "文档正文已生成，正在写入可下载文件。", "file"));
-    const attachment = await writeGeneratedFile(
-      `${Date.now()}-generated-document.md`,
+    onProgress?.(
+      progressEvent(
+        targetIsImage ? "正在生成图片文件" : "正在渲染文件",
+        targetIsImage
+          ? "正在调用图片模型生成可下载图片。"
+          : "正文已生成，正在写入指定格式的可下载文件。",
+        targetIsImage ? "image" : "file"
+      )
+    );
+    const generated = await createGeneratedFile(
+      latestPrompt,
       completion.content,
-      "text/markdown; charset=utf-8"
+      {
+        apiKey,
+        baseUrl: openAiConfig.baseUrl
+      }
     );
 
     return {
@@ -491,7 +499,10 @@ export const processChat = async (
         completionTokens: completion.usage?.completion_tokens,
         totalTokens: completion.usage?.total_tokens
       },
-      message: createAssistantMessage("文件已经生成，点击下方按钮即可下载。", [attachment])
+      message: createAssistantMessage(
+        `${generated.format.toUpperCase()} 文件已经生成，点击下方按钮即可下载。${generated.note ? `\n\n${generated.note}` : ""}`,
+        [generated.attachment]
+      )
     };
   }
 

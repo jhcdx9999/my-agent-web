@@ -46,7 +46,8 @@ const renderAttachment = (attachment: ChatAttachment): string => {
           ? "已上传 PDF"
           : "已上传文件"
         : "下载文件";
-  const icon = attachment.kind === "pdf" ? "PDF" : attachment.kind === "data" ? "DATA" : "FILE";
+  const extension = attachment.filename.split(".").pop()?.toUpperCase() || "";
+  const icon = attachment.kind === "pdf" ? "PDF" : attachment.kind === "data" ? "DATA" : extension.slice(0, 4) || "FILE";
   const inner = `
       <span class="file-icon">${icon}</span>
       <span>
@@ -56,7 +57,7 @@ const renderAttachment = (attachment: ChatAttachment): string => {
   `;
 
   return attachment.url
-    ? `<a class="attachment attachment-file" href="${attachment.url}" download>${inner}</a>`
+    ? `<a class="attachment attachment-file" href="${attachment.url}" download target="_blank" rel="noopener">${inner}</a>`
     : `<div class="attachment attachment-file">${inner}</div>`;
 };
 

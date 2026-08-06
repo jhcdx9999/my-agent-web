@@ -7,6 +7,14 @@ import type { ChatAttachment } from "../../shared/types";
 
 const mimeFromExtension = (extension: string): string => {
   switch (extension.toLowerCase()) {
+    case ".docx":
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    case ".pptx":
+      return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    case ".xlsx":
+      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    case ".pdf":
+      return "application/pdf";
     case ".jpg":
     case ".jpeg":
       return "image/jpeg";

@@ -383,11 +383,12 @@ export const createTextCompletion = async (
 
 export const generateImage = async (
   prompt: string,
-  options: { apiKey: string; baseUrl?: string } | string
+  options: { apiKey: string; baseUrl?: string; outputFormat?: "png" | "jpg" | "webp" } | string
 ): Promise<{ buffer: Buffer; mimeType: string; extension: "png" | "jpg" | "webp" }> => {
   const apiKey = typeof options === "string" ? options : options.apiKey;
   const baseUrl = typeof options === "string" ? undefined : options.baseUrl;
-  const outputFormat = appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat;
+  const configuredOutputFormat = typeof options === "string" ? undefined : options.outputFormat;
+  const outputFormat = configuredOutputFormat ?? (appConfig.openai.imageFormat === "jpeg" ? "jpg" : appConfig.openai.imageFormat);
   const extension = outputFormat === "jpg" ? "jpg" : outputFormat === "webp" ? "webp" : "png";
   const mimeType = extension === "jpg" ? "image/jpeg" : `image/${extension}`;
 
