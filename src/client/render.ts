@@ -229,7 +229,7 @@ const renderConversationList = (state: AppState): string => `
               )
             )
             .join("")
-        : `<div class="conversation-empty">鏆傛棤鍘嗗彶</div>`
+        : `<div class="conversation-empty">暂无历史</div>`
     }
   </div>
 `;
