@@ -15,6 +15,25 @@ type AttachmentProgressReporter = (
 ) => void;
 
 const execFileAsync = promisify(execFile);
+let activeOcrJobs = 0;
+const waitingOcrJobs: Array<() => void> = [];
+
+const withOcrSlot = async <T>(task: () => Promise<T>): Promise<T> => {
+  const maxConcurrent = Math.max(1, appConfig.upload.imageOcrConcurrency);
+  if (activeOcrJobs >= maxConcurrent) {
+    await new Promise<void>((resolve) => {
+      waitingOcrJobs.push(resolve);
+    });
+  }
+
+  activeOcrJobs += 1;
+  try {
+    return await task();
+  } finally {
+    activeOcrJobs = Math.max(0, activeOcrJobs - 1);
+    waitingOcrJobs.shift()?.();
+  }
+};
 
 const textMimeTypes = new Set([
   "text/plain",
@@ -579,7 +598,11 @@ const renderPdfPagesForOcr = async (pdfPath: string, tempDir: string): Promise<s
   }
 };
 
-const tryExtractPdfWithOcr = async (pdfPath: string, tempDir: string): Promise<string> => {
+const tryExtractPdfWithOcr = async (
+  pdfPath: string,
+  tempDir: string,
+  onProgress?: AttachmentProgressReporter
+): Promise<string> => {
   const pagePaths = await renderPdfPagesForOcr(pdfPath, tempDir);
   if (pagePaths.length === 0) {
     return "";
@@ -588,8 +611,9 @@ const tryExtractPdfWithOcr = async (pdfPath: string, tempDir: string): Promise<s
   const pieces: string[] = [];
   for (let index = 0; index < pagePaths.length; index += 1) {
     const pagePath = pagePaths[index];
+    onProgress?.("正在 OCR PDF", `正在识别第 ${index + 1}/${pagePaths.length} 页。`, "file");
     const dimensions = imageDimensions(await fs.readFile(pagePath));
-    const text = await tryExtractImageTextWithOcr(pagePath, tempDir, dimensions);
+    const text = await tryExtractImageTextWithOcr(pagePath, tempDir, dimensions, onProgress);
     if (isReadableExtractedText(text)) {
       pieces.push(`[PDF 第 ${index + 1} 页 OCR]\n${text}`);
     }
@@ -623,7 +647,7 @@ const extractPdfText = async (
     }
 
     onProgress?.("正在 OCR PDF", `未能直接读取 ${filename} 的嵌入文字，正在把页面渲染为图片后分段识别。`, "file");
-    return normalizeExtractedDocumentText(limitRawExtractedText(await tryExtractPdfWithOcr(pdfPath, tempDir)));
+    return normalizeExtractedDocumentText(limitRawExtractedText(await tryExtractPdfWithOcr(pdfPath, tempDir, onProgress)));
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -734,15 +758,17 @@ const tryExtractImageTextWithTesseract = async (imagePath: string, timeoutMs: nu
   }
 
   try {
-    const { stdout } = await execFileAsync(
-      appConfig.upload.imageOcrCommand,
-      [imagePath, "stdout", "-l", appConfig.upload.imageOcrLang, "--psm", appConfig.upload.imageOcrPsm],
-      {
-        encoding: "utf8",
-        maxBuffer: appConfig.upload.maxRawExtractedTextChars * 8,
-        timeout: timeoutMs,
-        windowsHide: true
-      }
+    const { stdout } = await withOcrSlot(() =>
+      execFileAsync(
+        appConfig.upload.imageOcrCommand,
+        [imagePath, "stdout", "-l", appConfig.upload.imageOcrLang, "--psm", appConfig.upload.imageOcrPsm],
+        {
+          encoding: "utf8",
+          maxBuffer: appConfig.upload.maxRawExtractedTextChars * 8,
+          timeout: timeoutMs,
+          windowsHide: true
+        }
+      )
     );
     return cleanExtractedText(stdout);
   } catch {
@@ -799,7 +825,8 @@ const shouldPreferSlicedOcr = (dimensions: { width?: number; height?: number }):
 const tryExtractImageTextWithOcr = async (
   imagePath: string,
   tempDir: string,
-  dimensions: { width?: number; height?: number }
+  dimensions: { width?: number; height?: number },
+  onProgress?: AttachmentProgressReporter
 ): Promise<string> => {
   const preferSlicedOcr = shouldPreferSlicedOcr(dimensions);
   const directText = preferSlicedOcr
@@ -815,7 +842,9 @@ const tryExtractImageTextWithOcr = async (
   }
 
   const pieces: string[] = [];
-  for (const slicePath of slicePaths) {
+  for (let index = 0; index < slicePaths.length; index += 1) {
+    const slicePath = slicePaths[index];
+    onProgress?.("正在 OCR 图片", `正在识别图片切片 ${index + 1}/${slicePaths.length}。`, "file");
     const text = await tryExtractImageTextWithTesseract(slicePath, appConfig.upload.imageOcrSliceTimeoutMs);
     if (isReadableExtractedText(text)) {
       pieces.push(text);
@@ -827,7 +856,11 @@ const tryExtractImageTextWithOcr = async (
   return textQualityScore(slicedText) >= textQualityScore(fallbackText) ? slicedText : fallbackText;
 };
 
-const extractImageText = async (buffer: Buffer, filename: string): Promise<{ text: string; description: string }> => {
+const extractImageText = async (
+  buffer: Buffer,
+  filename: string,
+  onProgress?: AttachmentProgressReporter
+): Promise<{ text: string; description: string }> => {
   const dimensions = imageDimensions(buffer);
   const dimensionText = dimensions.width && dimensions.height
     ? `${dimensions.width}x${dimensions.height}`
@@ -844,7 +877,7 @@ const extractImageText = async (buffer: Buffer, filename: string): Promise<{ tex
 
   try {
     await fs.writeFile(imagePath, buffer);
-    const ocrText = await tryExtractImageTextWithOcr(imagePath, tempDir, dimensions);
+    const ocrText = await tryExtractImageTextWithOcr(imagePath, tempDir, dimensions, onProgress);
     const limitedText = ocrText ? limitExtractedText(ocrText, filename) : "";
     return {
       text: [
@@ -886,7 +919,7 @@ const materializeUploadedAttachment = async (
     }
 
     onProgress?.("正在分析图片", `正在从 ${attachment.filename} 提取图片信息和可读文字。`, "file");
-    const extracted = await extractImageText(buffer, attachment.filename);
+    const extracted = await extractImageText(buffer, attachment.filename, onProgress);
 
     return {
       ...attachment,
@@ -900,7 +933,7 @@ const materializeUploadedAttachment = async (
 
   if (isPdfAttachment(attachment)) {
     onProgress?.("正在解析 PDF", `正在从 ${attachment.filename} 提取可分析的文字内容。`, "file");
-    const extracted = await extractPdfText(buffer);
+    const extracted = await extractPdfText(buffer, onProgress, attachment.filename);
     const text = extracted
       ? limitExtractedText(extracted, attachment.filename)
       : "未能从该 PDF 直接提取文字。它可能是扫描件、加密文件，或使用了无法映射的嵌入字体；请改传可复制文字的 PDF，或先进行 OCR 后再上传。";

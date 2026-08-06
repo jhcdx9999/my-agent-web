@@ -207,11 +207,11 @@ export const sendChatStream = async (
   }
 
   if (!response.headers.get("content-type")?.includes("text/event-stream")) {
-    return sendChat(payload);
+    throw new Error("服务器没有建立流式响应通道，请刷新页面后重试。");
   }
 
   if (!response.body) {
-    return sendChat(payload);
+    throw new Error("浏览器没有收到可读取的流式响应体，请刷新页面后重试。");
   }
 
   const reader = response.body.getReader();
@@ -248,25 +248,30 @@ export const sendChatStream = async (
     return undefined;
   };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-    let separator = buffer.search(/\r?\n\r?\n/);
-    while (separator >= 0) {
-      const raw = buffer.slice(0, separator);
-      buffer = buffer.slice(buffer[separator] === "\r" ? separator + 4 : separator + 2);
-      const result = consumeEvent(raw);
-      if (result) {
-        await reader.cancel().catch(() => undefined);
-        return result;
+      let separator = buffer.search(/\r?\n\r?\n/);
+      while (separator >= 0) {
+        const raw = buffer.slice(0, separator);
+        buffer = buffer.slice(buffer[separator] === "\r" ? separator + 4 : separator + 2);
+        const result = consumeEvent(raw);
+        if (result) {
+          await reader.cancel().catch(() => undefined);
+          return result;
+        }
+        separator = buffer.search(/\r?\n\r?\n/);
       }
-      separator = buffer.search(/\r?\n\r?\n/);
-    }
 
-    if (done) {
-      break;
+      if (done) {
+        break;
+      }
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`流式连接中断：${message}。长附件 OCR 可能仍在服务器处理，请稍后重试或降低 OCR 页数/切片数。`);
   }
 
   throw new Error("流式响应结束，但没有收到最终结果。");

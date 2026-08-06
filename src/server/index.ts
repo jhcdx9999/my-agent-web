@@ -32,6 +32,10 @@ ensureDirectory(appConfig.storageDir)
     const server = app.listen(appConfig.port, appConfig.host, () => {
       console.log(`Custom GPT server listening on http://${appConfig.host}:${appConfig.port}`);
     });
+    server.requestTimeout = appConfig.serverTimeoutMs;
+    server.headersTimeout = appConfig.serverHeadersTimeoutMs;
+    server.keepAliveTimeout = appConfig.serverKeepAliveTimeoutMs;
+    server.timeout = appConfig.serverTimeoutMs;
 
     server.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "EADDRINUSE") {

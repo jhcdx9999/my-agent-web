@@ -13,7 +13,6 @@ import {
   renameConversation as renameConversationRequest,
   register,
   saveOpenAiApiKey,
-  sendChat,
   sendChatStream,
   setAuthToken
 } from "./api";
@@ -480,13 +479,6 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
           applyProgressEvent(event);
         }
       }
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/stream|ReadableStream|text\/event-stream|流式|network|fetch|chunk|incomplete|terminated|aborted/i.test(message)) {
-        return sendChat(payload);
-      }
-
-      throw error;
     });
 
     if (requestId !== activeRequestId) {

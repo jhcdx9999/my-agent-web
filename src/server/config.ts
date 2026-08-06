@@ -99,6 +99,7 @@ const maxRawExtractedTextChars = intFromEnv(
   process.env.MAX_RAW_EXTRACTED_TEXT_CHARS,
   Math.max(maxAttachmentContextChars * 4, 300000)
 );
+const serverTimeoutMs = intFromEnv(process.env.SERVER_TIMEOUT_MS, 600000);
 
 export const appConfig = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -106,6 +107,9 @@ export const appConfig = {
   host: process.env.HOST ?? "127.0.0.1",
   corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
   requestBodyLimit: process.env.REQUEST_BODY_LIMIT ?? "35mb",
+  serverTimeoutMs,
+  serverHeadersTimeoutMs: intFromEnv(process.env.SERVER_HEADERS_TIMEOUT_MS, serverTimeoutMs + 30000),
+  serverKeepAliveTimeoutMs: intFromEnv(process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS, 65000),
   storageDir: path.resolve(process.cwd(), "storage", "generated"),
   authDir: path.resolve(process.cwd(), "storage", "auth"),
   usersDir: path.resolve(process.cwd(), "storage", "users"),
@@ -196,14 +200,15 @@ export const appConfig = {
     imageOcrTimeoutMs,
     imageOcrSliceTimeoutMs: intFromEnv(process.env.IMAGE_OCR_SLICE_TIMEOUT_MS, Math.min(imageOcrTimeoutMs, 15000)),
     imageOcrPsm: stringFromEnv(process.env.IMAGE_OCR_PSM, "6"),
+    imageOcrConcurrency: intFromEnv(process.env.IMAGE_OCR_CONCURRENCY, 1),
     imageOcrPythonCommands,
     imageOcrScale: intFromEnv(process.env.IMAGE_OCR_SCALE, 3),
-    imageOcrSliceHeight: intFromEnv(process.env.IMAGE_OCR_SLICE_HEIGHT, 1400),
-    imageOcrMaxSlices: intFromEnv(process.env.IMAGE_OCR_MAX_SLICES, 18),
+    imageOcrSliceHeight: intFromEnv(process.env.IMAGE_OCR_SLICE_HEIGHT, 1800),
+    imageOcrMaxSlices: intFromEnv(process.env.IMAGE_OCR_MAX_SLICES, 12),
     pdfTextCommand: stringFromEnv(process.env.PDF_TEXT_COMMAND, "pdftotext"),
     pdfRenderCommand: stringFromEnv(process.env.PDF_RENDER_COMMAND, "pdftoppm"),
     pdfOcrDpi: intFromEnv(process.env.PDF_OCR_DPI, 180),
-    pdfOcrMaxPages: intFromEnv(process.env.PDF_OCR_MAX_PAGES, 24),
+    pdfOcrMaxPages: intFromEnv(process.env.PDF_OCR_MAX_PAGES, 16),
     pdfOcrRenderTimeoutMs: intFromEnv(process.env.PDF_OCR_RENDER_TIMEOUT_MS, 60000),
     pdfPythonCommands,
     accept:
