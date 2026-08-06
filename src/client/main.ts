@@ -475,7 +475,7 @@ const submitMessages = async (nextMessages: ChatMessage[]): Promise<void> => {
       }
     }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
-      if (/stream|ReadableStream|text\/event-stream|流式/i.test(message)) {
+      if (/stream|ReadableStream|text\/event-stream|流式|network|fetch|chunk|incomplete|terminated|aborted/i.test(message)) {
         return sendChat(payload);
       }
 

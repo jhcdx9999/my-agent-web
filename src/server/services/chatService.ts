@@ -33,6 +33,16 @@ const progressEvent = (
 
 const getLatestPrompt = (messages: ChatMessage[]): string => messages[messages.length - 1]?.content ?? "";
 
+const saferImagePrompt = (prompt: string, hasReferenceImage: boolean): string => {
+  const base = prompt.trim() || "生成一张图片";
+  const safetyInstruction =
+    "请按用户的视觉方向生成图片，但避免呈现真实世界恐怖袭击、真实灾难、伤亡、血腥或可识别真实建筑被撞毁的画面；如果用户要求撞击、爆炸、坠毁或最高楼等高风险内容，请改写为虚构电影感场景，例如远处两架飞机/直升机在虚构城市高楼附近飞行，带烟雾、紧张氛围和灾难片视觉风格，但不要发生真实撞击，不要出现伤亡、血腥、恐怖主义标识、文字、水印或 logo。";
+
+  return hasReferenceImage
+    ? `${base}\n\n参考图要求：尽量保留原图的主体构图、视角和光照，只进行安全的视觉改动。\n${safetyInstruction}`
+    : `${base}\n\n${safetyInstruction}`;
+};
+
 const uploadedImagesForImageTask = (messages: ChatMessage[]): ChatAttachment[] =>
   messages.flatMap((message) =>
     message.attachments?.filter(
@@ -397,19 +407,20 @@ export const processChat = async (
   }
 
   if (intent === "image") {
+    const imagePrompt = saferImagePrompt(latestPrompt, imageReferences.length > 0);
     onProgress?.(
       progressEvent(
         imageReferences.length > 0 ? "正在根据参考图生成图片" : "正在生成图片",
         imageReferences.length > 0
-          ? `正在用 ${appConfig.openai.imageModel} 读取上传图片并生成新图。`
+          ? `正在用 ${appConfig.openai.imageModel} 读取上传图片并生成安全改图。`
           : `正在用 ${appConfig.openai.imageModel} 生成图片。`,
         "image"
       )
     );
     const image =
       imageReferences.length > 0
-        ? await editImage(latestPrompt, imageReferences, openAiConfig)
-        : await generateImage(latestPrompt, openAiConfig);
+        ? await editImage(imagePrompt, imageReferences, openAiConfig)
+        : await generateImage(imagePrompt, openAiConfig);
     onProgress?.(progressEvent("正在保存图片", "图片已生成，正在写入可下载文件。", "image"));
     const attachment = await writeGeneratedFile(
       `${Date.now()}-generated-image.${image.extension}`,

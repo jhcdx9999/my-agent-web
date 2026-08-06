@@ -436,7 +436,11 @@ export const generateImage = async (
     };
   }
 
-  throw new HttpError(502, "Image generation returned no image data.", data);
+  throw new HttpError(
+    502,
+    "Image generation returned no image data. 上游没有返回 b64_json 或 url，通常表示图片服务中途失败、内容策略拒绝后隐藏了真实错误，或当前中转站没有完整支持该图片响应格式。",
+    data
+  );
 };
 
 export const editImage = async (
@@ -540,5 +544,9 @@ export const editImage = async (
     };
   }
 
-  throw new HttpError(502, "Image editing returned no image data.", data);
+  throw new HttpError(
+    502,
+    "Image editing returned no image data. 上游没有返回 b64_json 或 url，通常表示图片服务中途失败、内容策略拒绝后隐藏了真实错误，或当前中转站没有完整支持该图片响应格式。",
+    data
+  );
 };

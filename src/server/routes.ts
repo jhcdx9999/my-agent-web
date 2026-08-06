@@ -35,8 +35,18 @@ const sendJson = (response: express.Response, value: unknown, statusCode = 200):
 };
 
 const sendSse = (response: express.Response, event: string, value: unknown): void => {
+  if (response.destroyed || response.writableEnded) {
+    return;
+  }
+
   response.write(`event: ${event}\n`);
   response.write(`data: ${JSON.stringify(value)}\n\n`);
+};
+
+const endSse = (response: express.Response): void => {
+  if (!response.destroyed && !response.writableEnded) {
+    response.end();
+  }
 };
 
 const chatRequestFromBody = (body: Partial<ChatRequest>): ChatRequest => {
@@ -235,12 +245,24 @@ export const createRouter = (): express.Router => {
 
   router.post("/chat/stream", async (request, response) => {
     response.status(200);
+    response.removeHeader("Content-Length");
     response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     response.setHeader("Cache-Control", "no-store, no-transform");
     response.setHeader("Connection", "keep-alive");
     response.setHeader("X-Accel-Buffering", "no");
     response.flushHeaders?.();
     response.write(": connected\n\n");
+    const heartbeat = setInterval(() => {
+      if (response.destroyed || response.writableEnded) {
+        clearInterval(heartbeat);
+        return;
+      }
+      response.write(": keep-alive\n\n");
+    }, 15000);
+
+    request.on("close", () => {
+      clearInterval(heartbeat);
+    });
 
     try {
       const user = await authenticateToken(tokenFromRequest(request));
@@ -274,7 +296,8 @@ export const createRouter = (): express.Router => {
         ...publicResponse,
         conversation
       });
-      response.end();
+      clearInterval(heartbeat);
+      endSse(response);
     } catch (error) {
       const statusCode = error instanceof HttpError ? error.statusCode : 500;
       sendSse(response, "error", {
@@ -282,7 +305,8 @@ export const createRouter = (): express.Router => {
         statusCode,
         details: error instanceof HttpError ? error.details : undefined
       });
-      response.end();
+      clearInterval(heartbeat);
+      endSse(response);
     }
   });
 
