@@ -218,6 +218,12 @@ const addUploads = async (files: FileList | null): Promise<void> => {
   }
 };
 
+const supportsDesktopDragUpload = (): boolean =>
+  window.matchMedia("(pointer: fine)").matches;
+
+const hasDraggedFiles = (event: DragEvent): boolean =>
+  Array.from(event.dataTransfer?.types ?? []).includes("Files");
+
 const loadConversations = async (): Promise<void> => {
   if (!state.user) {
     return;
@@ -266,6 +272,7 @@ const restoreSession = async (): Promise<void> => {
 };
 
 const selectConversation = async (conversationId: string): Promise<void> => {
+  activeRequestId += 1;
   try {
     const conversation = await fetchConversation(conversationId);
     updateState({
@@ -322,7 +329,7 @@ const getLatestUserPrompt = (messages: ChatMessage[]): string =>
   [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
 
 const promptNeedsImage = (prompt: string): boolean =>
-  /(生成|画|绘制|做一张|来一张|create|generate|draw|image|picture|photo|海报|插画|图片)/i.test(prompt);
+  /(生成|画|绘制|做一张|来一张|出图|改图|修图|修改|编辑|改为|改成|变成|换成|添加|加上|重新生成|再生成|create|generate|draw|edit|modify|海报|插画)/i.test(prompt);
 
 const promptNeedsFile = (prompt: string): boolean =>
   /(生成|创建|导出|保存|下载|文件|文档|表格|csv|xlsx|json|txt|md|markdown|report|download|file)/i.test(prompt);
@@ -684,6 +691,7 @@ function bindEvents(): void {
       }
 
       try {
+        activeRequestId += 1;
         await deleteConversationRequest(conversationId);
         const isActive = state.activeConversationId === conversationId;
         updateState(
@@ -764,6 +772,7 @@ function bindEvents(): void {
       }
 
       try {
+        activeRequestId += 1;
         const conversation = await createConversation();
         updateState({
           activeConversationId: conversation.id,
@@ -945,6 +954,42 @@ function bindEvents(): void {
     void addUploads(fileInput.files).then(() => {
       fileInput.value = "";
     });
+  });
+
+  const chatPanel = document.querySelector<HTMLElement>(".chat-panel");
+  chatPanel?.addEventListener("dragenter", (event) => {
+    if (!supportsDesktopDragUpload() || state.pending || state.paused || !hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    updateState({ draggingUpload: true }, { scroll: false });
+  });
+  chatPanel?.addEventListener("dragover", (event) => {
+    if (!supportsDesktopDragUpload() || state.pending || state.paused || !hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+  chatPanel?.addEventListener("dragleave", (event) => {
+    if (!supportsDesktopDragUpload()) {
+      return;
+    }
+    const related = event.relatedTarget as Node | null;
+    if (related && chatPanel.contains(related)) {
+      return;
+    }
+    updateState({ draggingUpload: false }, { scroll: false });
+  });
+  chatPanel?.addEventListener("drop", (event) => {
+    if (!supportsDesktopDragUpload() || state.pending || state.paused || !hasDraggedFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    updateState({ draggingUpload: false }, { scroll: false });
+    void addUploads(event.dataTransfer?.files ?? null);
   });
 
   document.querySelectorAll<HTMLButtonElement>("[data-remove-upload]").forEach((button) => {

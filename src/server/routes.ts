@@ -225,7 +225,14 @@ export const createRouter = (): express.Router => {
   router.post("/chat", async (request, response, next) => {
     try {
       const user = await authenticateToken(tokenFromRequest(request));
-      const body = chatRequestFromBody(request.body as Partial<ChatRequest>);
+      const rawBody = request.body as Partial<ChatRequest>;
+      const body = chatRequestFromBody(rawBody);
+      if (rawBody.conversationId) {
+        const existingConversation = await getConversation(user, rawBody.conversationId);
+        if (!existingConversation) {
+          throw new HttpError(404, "当前会话不存在或不属于该用户，请新建会话后再发送。");
+        }
+      }
       const chatResponse = await processChat(body, user);
       const conversation = await saveConversation(
         user,
@@ -266,7 +273,14 @@ export const createRouter = (): express.Router => {
 
     try {
       const user = await authenticateToken(tokenFromRequest(request));
-      const body = chatRequestFromBody(request.body as Partial<ChatRequest>);
+      const rawBody = request.body as Partial<ChatRequest>;
+      const body = chatRequestFromBody(rawBody);
+      if (rawBody.conversationId) {
+        const existingConversation = await getConversation(user, rawBody.conversationId);
+        if (!existingConversation) {
+          throw new HttpError(404, "当前会话不存在或不属于该用户，请新建会话后再发送。");
+        }
+      }
       const progress = (event: ChatProgressEvent): void => {
         sendSse(response, "progress", event);
       };

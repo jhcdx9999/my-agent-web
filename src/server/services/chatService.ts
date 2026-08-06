@@ -358,6 +358,7 @@ export const processChat = async (
   onProgress?: ChatProgressReporter
 ): Promise<ProcessChatResponse> => {
   const normalizedMessages = normalizeUploads(request.messages);
+  const initialIntent = detectIntent(normalizedMessages);
   onProgress?.(progressEvent("正在分析请求", "正在识别任务类型、模型、附件和会话上下文。", "thinking"));
 
   if (request.paused) {
@@ -375,8 +376,10 @@ export const processChat = async (
     onProgress?.(progressEvent("正在读取附件", "正在整理上传的图片、PDF 或文件内容。", "file"));
   }
 
-  const materializedMessages = await materializeUploadedAttachmentText(normalizedMessages, (title, detail, kind) =>
-    onProgress?.(progressEvent(title, detail, kind ?? "file"))
+  const materializedMessages = await materializeUploadedAttachmentText(
+    normalizedMessages,
+    (title, detail, kind) => onProgress?.(progressEvent(title, detail, kind ?? "file")),
+    { preserveImageData: initialIntent === "image" }
   );
 
   const openAiModel = appConfig.openai.models.includes(request.model)
@@ -387,7 +390,7 @@ export const processChat = async (
     : appConfig.codex.defaultModel;
   const openAiConfig = await getUserOpenAiConfig(user);
   const apiKey = openAiConfig.apiKey;
-  const intent = detectIntent(materializedMessages);
+  const intent = initialIntent;
   const latestPrompt = getLatestPrompt(materializedMessages);
   const imageReferences = uploadedImagesForImageTask(materializedMessages);
   const hasUploadedAttachments = hasBinaryUploadedAttachment(materializedMessages);

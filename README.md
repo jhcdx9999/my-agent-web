@@ -72,6 +72,11 @@ OPENAI_IMAGE_FORMAT=png
 REQUEST_BODY_LIMIT=35mb
 MAX_UPLOAD_FILES=5
 MAX_UPLOAD_BYTES=10485760
+MAX_EXTRACTED_TEXT_CHARS=12000
+UPLOAD_IMAGE_MODE=ocr
+IMAGE_OCR_COMMAND=tesseract
+IMAGE_OCR_LANG=chi_sim+eng
+IMAGE_OCR_TIMEOUT_MS=30000
 AUTH_TOKEN_TTL_HOURS=168
 AUTH_MODE=free
 DOMINANT_USERS_FILE=a.json
@@ -190,6 +195,12 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 node -v
 npm -v
+```
+
+安装上传解析依赖：
+
+```bash
+sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
 ```
 
 部署项目：

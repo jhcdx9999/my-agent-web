@@ -380,7 +380,7 @@ export const renderApp = (state: AppState): string => {
           </section>
         </header>
 
-        <section class="chat-panel ${
+        <section class="chat-panel ${state.draggingUpload ? "is-dragging-upload" : ""} ${
           state.apiKeyPanelOpen || (state.requiresOpenAiApiKeyForText && !state.user.hasOpenAiApiKey)
             ? "has-api-key-panel"
             : ""
@@ -413,6 +413,10 @@ export const renderApp = (state: AppState): string => {
                 </form>`
               : ""
           }
+          <div class="drop-overlay" aria-hidden="${state.draggingUpload ? "false" : "true"}">
+            <strong>释放以上传文件</strong>
+            <span>支持图片、PDF、文本、CSV、JSON 和代码文件</span>
+          </div>
           <div class="message-list" id="messageList">
             ${
               state.messages.length

@@ -433,6 +433,110 @@ const extractPdfText = async (buffer: Buffer): Promise<string> => {
   }
 };
 
+const imageDimensions = (buffer: Buffer): { width?: number; height?: number; format?: string } => {
+  if (buffer.length >= 24 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return {
+      width: buffer.readUInt32BE(16),
+      height: buffer.readUInt32BE(20),
+      format: "png"
+    };
+  }
+
+  if (buffer.length >= 10 && buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = buffer[offset + 1];
+      const length = buffer.readUInt16BE(offset + 2);
+      if (length < 2) {
+        break;
+      }
+      if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
+        return {
+          height: buffer.readUInt16BE(offset + 5),
+          width: buffer.readUInt16BE(offset + 7),
+          format: "jpeg"
+        };
+      }
+      offset += 2 + length;
+    }
+  }
+
+  if (buffer.length >= 30 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+    const chunk = buffer.subarray(12, 16).toString("ascii");
+    if (chunk === "VP8X" && buffer.length >= 30) {
+      return {
+        width: 1 + buffer.readUIntLE(24, 3),
+        height: 1 + buffer.readUIntLE(27, 3),
+        format: "webp"
+      };
+    }
+    return { format: "webp" };
+  }
+
+  return {};
+};
+
+const tryExtractImageTextWithOcr = async (imagePath: string): Promise<string> => {
+  if (!appConfig.upload.imageOcrCommand) {
+    return "";
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      appConfig.upload.imageOcrCommand,
+      [imagePath, "stdout", "-l", appConfig.upload.imageOcrLang],
+      {
+        encoding: "utf8",
+        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
+        timeout: appConfig.upload.imageOcrTimeoutMs,
+        windowsHide: true
+      }
+    );
+    return cleanExtractedText(stdout);
+  } catch {
+    return "";
+  }
+};
+
+const extractImageText = async (buffer: Buffer, filename: string): Promise<{ text: string; description: string }> => {
+  const dimensions = imageDimensions(buffer);
+  const dimensionText = dimensions.width && dimensions.height
+    ? `${dimensions.width}x${dimensions.height}`
+    : "unknown";
+  const info = [
+    `文件名: ${filename}`,
+    `图片格式: ${dimensions.format ?? "unknown"}`,
+    `图片尺寸: ${dimensionText}`,
+    `文件大小: ${buffer.length} bytes`
+  ].join("\n");
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "gpt-web-image-"));
+  const imagePath = path.join(tempDir, filename.replace(/[^\w.-]+/g, "_") || "upload-image");
+
+  try {
+    await fs.writeFile(imagePath, buffer);
+    const ocrText = await tryExtractImageTextWithOcr(imagePath);
+    const limitedText = ocrText ? limitExtractedText(ocrText, filename) : "";
+    return {
+      text: [
+        info,
+        limitedText
+          ? `OCR 提取文字:\n${limitedText}`
+          : "OCR 提取文字: 未提取到可读文字；请基于图片文件信息说明能力限制，或建议用户粘贴原文/安装 OCR。"
+      ].join("\n"),
+      description: limitedText
+        ? "图片已在服务器端 OCR 为文本上下文。"
+        : "图片已转换为文件信息；OCR 未提取到可读文字。"
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+};
+
 const attachmentTextBlock = (attachment: ChatAttachment, text: string): string =>
   [
     `[上传附件: ${attachment.filename}]`,
@@ -442,17 +546,32 @@ const attachmentTextBlock = (attachment: ChatAttachment, text: string): string =
 
 const materializeUploadedAttachment = async (
   attachment: ChatAttachment,
-  onProgress?: AttachmentProgressReporter
+  onProgress?: AttachmentProgressReporter,
+  options: { preserveImageData?: boolean } = {}
 ): Promise<ChatAttachment> => {
   if (attachment.source !== "uploaded" || !attachment.dataUrl) {
     return attachment;
   }
 
-  if (attachment.mimeType.startsWith("image/")) {
-    return attachment;
-  }
-
   const buffer = dataUrlToBuffer(attachment.dataUrl);
+
+  if (attachment.mimeType.startsWith("image/")) {
+    if (options.preserveImageData || appConfig.upload.imageMode === "vision") {
+      return attachment;
+    }
+
+    onProgress?.("正在分析图片", `正在从 ${attachment.filename} 提取图片信息和可读文字。`, "file");
+    const extracted = await extractImageText(buffer, attachment.filename);
+
+    return {
+      ...attachment,
+      kind: "image",
+      dataUrl: undefined,
+      previewUrl: undefined,
+      textContent: attachmentTextBlock(attachment, extracted.text),
+      description: extracted.description
+    };
+  }
 
   if (isPdfAttachment(attachment)) {
     onProgress?.("正在解析 PDF", `正在从 ${attachment.filename} 提取可分析的文字内容。`, "file");
@@ -491,14 +610,15 @@ const materializeUploadedAttachment = async (
 
 export const materializeUploadedAttachmentText = async (
   messages: ChatMessage[],
-  onProgress?: AttachmentProgressReporter
+  onProgress?: AttachmentProgressReporter,
+  options: { preserveImageData?: boolean } = {}
 ): Promise<ChatMessage[]> =>
   Promise.all(
     messages.map(async (message) => ({
       ...message,
       attachments: message.attachments
         ? await Promise.all(
-            message.attachments.map((attachment) => materializeUploadedAttachment(attachment, onProgress))
+            message.attachments.map((attachment) => materializeUploadedAttachment(attachment, onProgress, options))
           )
         : undefined
     }))

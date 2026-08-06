@@ -491,6 +491,7 @@ select:disabled {
 }
 
 .chat-panel {
+  position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
@@ -499,6 +500,41 @@ select:disabled {
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--module-shadow);
+}
+
+.drop-overlay {
+  pointer-events: none;
+  position: absolute;
+  inset: 14px;
+  z-index: 18;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  border: 2px dashed color-mix(in srgb, var(--accent) 72%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--accent));
+  color: var(--text);
+  box-shadow: 0 24px 54px rgb(0 0 0 / 24%), var(--module-shadow);
+  opacity: 0;
+  transform: scale(0.985);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.drop-overlay strong {
+  font-size: 1.08rem;
+}
+
+.drop-overlay span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.chat-panel.is-dragging-upload .drop-overlay {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .chat-panel.has-api-key-panel {

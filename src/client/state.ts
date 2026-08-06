@@ -26,6 +26,7 @@ export interface AppState {
   textRuntime: "openai" | "codex";
   requiresOpenAiApiKeyForText: boolean;
   pendingUploads: ChatAttachment[];
+  draggingUpload: boolean;
   uploadAccept: string;
   uploadMaxFiles: number;
   uploadMaxBytesPerFile: number;
@@ -60,6 +61,7 @@ export const createInitialState = (): AppState => ({
   textRuntime: "openai",
   requiresOpenAiApiKeyForText: true,
   pendingUploads: [],
+  draggingUpload: false,
   uploadAccept: "image/*,.pdf,.txt,.md,.csv,.json",
   uploadMaxFiles: 5,
   uploadMaxBytesPerFile: 10 * 1024 * 1024,
