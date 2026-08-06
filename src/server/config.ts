@@ -85,6 +85,20 @@ const pdfPythonCommands = csvFromEnv(
   process.env.PDF_PYTHON_COMMANDS ?? process.env.PDF_PYTHON_COMMAND,
   defaultPdfPythonCommands
 );
+const imageOcrPythonCommands = csvFromEnv(
+  process.env.IMAGE_OCR_PYTHON_COMMANDS ?? process.env.IMAGE_OCR_PYTHON_COMMAND,
+  defaultPdfPythonCommands
+);
+const imageOcrTimeoutMs = intFromEnv(process.env.IMAGE_OCR_TIMEOUT_MS, 30000);
+const maxExtractedTextChars = intFromEnv(process.env.MAX_EXTRACTED_TEXT_CHARS, 12000);
+const maxAttachmentContextChars = intFromEnv(
+  process.env.MAX_ATTACHMENT_CONTEXT_CHARS,
+  Math.max(maxExtractedTextChars, 80000)
+);
+const maxRawExtractedTextChars = intFromEnv(
+  process.env.MAX_RAW_EXTRACTED_TEXT_CHARS,
+  Math.max(maxAttachmentContextChars * 4, 300000)
+);
 
 export const appConfig = {
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -171,12 +185,26 @@ export const appConfig = {
   upload: {
     maxFiles: intFromEnv(process.env.MAX_UPLOAD_FILES, 5),
     maxBytesPerFile: intFromEnv(process.env.MAX_UPLOAD_BYTES, 10 * 1024 * 1024),
-    maxExtractedTextChars: intFromEnv(process.env.MAX_EXTRACTED_TEXT_CHARS, 12000),
+    maxExtractedTextChars,
+    maxRawExtractedTextChars,
+    maxAttachmentContextChars,
+    attachmentContextChunkChars: intFromEnv(process.env.ATTACHMENT_CONTEXT_CHUNK_CHARS, 2800),
+    attachmentContextOverlapChars: intFromEnv(process.env.ATTACHMENT_CONTEXT_OVERLAP_CHARS, 180),
     imageMode: uploadImageMode as "vision" | "ocr",
     imageOcrCommand: stringFromEnv(process.env.IMAGE_OCR_COMMAND, "tesseract"),
     imageOcrLang: stringFromEnv(process.env.IMAGE_OCR_LANG, "chi_sim+eng"),
-    imageOcrTimeoutMs: intFromEnv(process.env.IMAGE_OCR_TIMEOUT_MS, 30000),
+    imageOcrTimeoutMs,
+    imageOcrSliceTimeoutMs: intFromEnv(process.env.IMAGE_OCR_SLICE_TIMEOUT_MS, Math.min(imageOcrTimeoutMs, 15000)),
+    imageOcrPsm: stringFromEnv(process.env.IMAGE_OCR_PSM, "6"),
+    imageOcrPythonCommands,
+    imageOcrScale: intFromEnv(process.env.IMAGE_OCR_SCALE, 3),
+    imageOcrSliceHeight: intFromEnv(process.env.IMAGE_OCR_SLICE_HEIGHT, 1400),
+    imageOcrMaxSlices: intFromEnv(process.env.IMAGE_OCR_MAX_SLICES, 18),
     pdfTextCommand: stringFromEnv(process.env.PDF_TEXT_COMMAND, "pdftotext"),
+    pdfRenderCommand: stringFromEnv(process.env.PDF_RENDER_COMMAND, "pdftoppm"),
+    pdfOcrDpi: intFromEnv(process.env.PDF_OCR_DPI, 180),
+    pdfOcrMaxPages: intFromEnv(process.env.PDF_OCR_MAX_PAGES, 24),
+    pdfOcrRenderTimeoutMs: intFromEnv(process.env.PDF_OCR_RENDER_TIMEOUT_MS, 60000),
     pdfPythonCommands,
     accept:
       "image/*,.pdf,.txt,.md,.csv,.json,.ts,.tsx,.js,.jsx,.html,.css,.xml,.yaml,.yml,.log"

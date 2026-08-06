@@ -188,13 +188,144 @@ const dedupeLines = (text: string): string => {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 };
 
+const normalizeExtractedDocumentText = (text: string): string =>
+  dedupeLines(cleanExtractedText(text)).replace(/[ \t]+\n/g, "\n").trim();
+
+const limitRawExtractedText = (text: string): string => {
+  const cleaned = cleanExtractedText(text);
+  return cleaned.length <= appConfig.upload.maxRawExtractedTextChars
+    ? cleaned
+    : cleaned.slice(0, appConfig.upload.maxRawExtractedTextChars);
+};
+
+const splitTextByBudget = (text: string, chunkChars: number, overlapChars: number): string[] => {
+  const cleaned = cleanExtractedText(text);
+  if (!cleaned) {
+    return [];
+  }
+
+  const chunks: string[] = [];
+  const safeChunkChars = Math.max(800, chunkChars);
+  const safeOverlapChars = Math.min(Math.max(0, overlapChars), Math.floor(safeChunkChars / 3));
+  let start = 0;
+
+  while (start < cleaned.length) {
+    let end = Math.min(cleaned.length, start + safeChunkChars);
+    if (end < cleaned.length) {
+      const boundary = cleaned.lastIndexOf("\n", end);
+      if (boundary > start + Math.floor(safeChunkChars * 0.45)) {
+        end = boundary;
+      } else {
+        const sentenceBoundary = Math.max(
+          cleaned.lastIndexOf("。", end),
+          cleaned.lastIndexOf(".", end),
+          cleaned.lastIndexOf("！", end),
+          cleaned.lastIndexOf("？", end),
+          cleaned.lastIndexOf(";", end)
+        );
+        if (sentenceBoundary > start + Math.floor(safeChunkChars * 0.45)) {
+          end = sentenceBoundary + 1;
+        }
+      }
+    }
+
+    const chunk = cleaned.slice(start, end).trim();
+    if (chunk) {
+      chunks.push(chunk);
+    }
+
+    if (end >= cleaned.length) {
+      break;
+    }
+
+    start = Math.max(end - safeOverlapChars, start + 1);
+  }
+
+  return chunks;
+};
+
+const pickRepresentativeChunks = (chunks: string[], maxChars: number): { chunks: string[]; omitted: number } => {
+  if (chunks.length === 0) {
+    return { chunks: [], omitted: 0 };
+  }
+
+  const selected = new Set<number>();
+  const add = (index: number): void => {
+    if (index >= 0 && index < chunks.length) {
+      selected.add(index);
+    }
+  };
+
+  add(0);
+  add(1);
+  add(chunks.length - 2);
+  add(chunks.length - 1);
+
+  const averageChunkChars =
+    chunks.reduce((sum, chunk) => sum + chunk.length, 0) / Math.max(chunks.length, 1);
+  const targetCount = Math.max(
+    selected.size,
+    Math.floor(maxChars / Math.max(averageChunkChars + 80, 1))
+  );
+
+  if (targetCount > selected.size && chunks.length > 1) {
+    for (let slot = 0; slot < targetCount; slot += 1) {
+      add(Math.round((slot * (chunks.length - 1)) / Math.max(targetCount - 1, 1)));
+    }
+  }
+
+  let ordered = [...selected].sort((left, right) => left - right);
+  let used = ordered.reduce((sum, index) => sum + chunks[index].length, 0);
+
+  const remaining = chunks
+    .map((_, index) => index)
+    .filter((index) => !selected.has(index));
+  const neighborFirst = remaining.sort((left, right) => {
+    const leftDistance = Math.min(...ordered.map((index) => Math.abs(index - left)));
+    const rightDistance = Math.min(...ordered.map((index) => Math.abs(index - right)));
+    return leftDistance - rightDistance || left - right;
+  });
+
+  for (const index of neighborFirst) {
+    if (used + chunks[index].length > maxChars && selected.size > 0) {
+      continue;
+    }
+    add(index);
+    used += chunks[index].length;
+    if (used >= maxChars) {
+      break;
+    }
+  }
+
+  ordered = [...selected].sort((left, right) => left - right);
+  return {
+    chunks: ordered.map((index) => `[片段 ${index + 1}/${chunks.length}]\n${chunks[index]}`),
+    omitted: chunks.length - ordered.length
+  };
+};
+
 const limitExtractedText = (text: string, filename: string): string => {
   const cleaned = cleanExtractedText(text);
-  if (cleaned.length <= appConfig.upload.maxExtractedTextChars) {
+  const contextBudget = appConfig.upload.maxAttachmentContextChars;
+  if (cleaned.length <= contextBudget) {
     return cleaned;
   }
 
-  return `${cleaned.slice(0, appConfig.upload.maxExtractedTextChars)}\n\n[${filename} 内容较长，已截断到 ${appConfig.upload.maxExtractedTextChars} 字符。]`;
+  const chunks = splitTextByBudget(
+    cleaned,
+    appConfig.upload.attachmentContextChunkChars,
+    appConfig.upload.attachmentContextOverlapChars
+  );
+  const picked = pickRepresentativeChunks(chunks, contextBudget);
+  const body = picked.chunks.join("\n\n---\n\n");
+
+  return [
+    `[${filename} 内容较长：原始提取 ${cleaned.length} 字符，已按文档顺序分段压缩到约 ${contextBudget} 字符上下文。]`,
+    picked.omitted > 0 ? `[已省略 ${picked.omitted} 个中间片段；如需精确逐页/逐段分析，请让用户指定页码、段落或要求继续读取。]` : "",
+    body
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 };
 
 const decodePdfLiteralString = (value: string): string => {
@@ -344,7 +475,7 @@ const tryExtractPdfWithPoppler = async (pdfPath: string): Promise<string> => {
       ["-layout", "-enc", "UTF-8", pdfPath, "-"],
       {
         encoding: "utf8",
-        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
+        maxBuffer: appConfig.upload.maxRawExtractedTextChars * 8,
         timeout: 15000,
         windowsHide: true
       }
@@ -395,7 +526,7 @@ const tryExtractPdfWithPython = async (pdfPath: string): Promise<string> => {
           ...process.env,
           PYTHONIOENCODING: "utf-8"
         },
-        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
+        maxBuffer: appConfig.upload.maxRawExtractedTextChars * 8,
         timeout: 20000,
         windowsHide: true
       });
@@ -411,7 +542,67 @@ const tryExtractPdfWithPython = async (pdfPath: string): Promise<string> => {
   return "";
 };
 
-const extractPdfText = async (buffer: Buffer): Promise<string> => {
+const renderPdfPagesForOcr = async (pdfPath: string, tempDir: string): Promise<string[]> => {
+  if (!appConfig.upload.pdfRenderCommand) {
+    return [];
+  }
+
+  const prefix = path.join(tempDir, "page");
+  try {
+    await execFileAsync(
+      appConfig.upload.pdfRenderCommand,
+      [
+        "-r",
+        String(appConfig.upload.pdfOcrDpi),
+        "-f",
+        "1",
+        "-l",
+        String(appConfig.upload.pdfOcrMaxPages),
+        "-png",
+        pdfPath,
+        prefix
+      ],
+      {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        timeout: appConfig.upload.pdfOcrRenderTimeoutMs,
+        windowsHide: true
+      }
+    );
+    const entries = await fs.readdir(tempDir);
+    return entries
+      .filter((entry) => /^page-\d+\.png$/i.test(entry))
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+      .map((entry) => path.join(tempDir, entry));
+  } catch {
+    return [];
+  }
+};
+
+const tryExtractPdfWithOcr = async (pdfPath: string, tempDir: string): Promise<string> => {
+  const pagePaths = await renderPdfPagesForOcr(pdfPath, tempDir);
+  if (pagePaths.length === 0) {
+    return "";
+  }
+
+  const pieces: string[] = [];
+  for (let index = 0; index < pagePaths.length; index += 1) {
+    const pagePath = pagePaths[index];
+    const dimensions = imageDimensions(await fs.readFile(pagePath));
+    const text = await tryExtractImageTextWithOcr(pagePath, tempDir, dimensions);
+    if (isReadableExtractedText(text)) {
+      pieces.push(`[PDF 第 ${index + 1} 页 OCR]\n${text}`);
+    }
+  }
+
+  return normalizeExtractedDocumentText(pieces.join("\n\n"));
+};
+
+const extractPdfText = async (
+  buffer: Buffer,
+  onProgress?: AttachmentProgressReporter,
+  filename = "upload.pdf"
+): Promise<string> => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "gpt-web-pdf-"));
   const pdfPath = path.join(tempDir, "upload.pdf");
 
@@ -427,7 +618,12 @@ const extractPdfText = async (buffer: Buffer): Promise<string> => {
       .sort((left, right) => textQualityScore(right) - textQualityScore(left));
     const best = candidates[0] ?? "";
 
-    return isReadableExtractedText(best) ? best : "";
+    if (isReadableExtractedText(best)) {
+      return normalizeExtractedDocumentText(limitRawExtractedText(best));
+    }
+
+    onProgress?.("正在 OCR PDF", `未能直接读取 ${filename} 的嵌入文字，正在把页面渲染为图片后分段识别。`, "file");
+    return normalizeExtractedDocumentText(limitRawExtractedText(await tryExtractPdfWithOcr(pdfPath, tempDir)));
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -480,7 +676,59 @@ const imageDimensions = (buffer: Buffer): { width?: number; height?: number; for
   return {};
 };
 
-const tryExtractImageTextWithOcr = async (imagePath: string): Promise<string> => {
+const imageOcrPreprocessScript = `
+import math
+import os
+import sys
+
+source = sys.argv[1]
+out_dir = sys.argv[2]
+scale = max(1, int(sys.argv[3]))
+slice_height = max(400, int(sys.argv[4]))
+max_slices = max(1, int(sys.argv[5]))
+
+from PIL import Image, ImageEnhance, ImageOps
+
+image = Image.open(source).convert("RGB")
+width, height = image.size
+
+left = 0
+right = width
+if width > 900:
+    left = int(width * 0.08)
+    right = int(width * 0.92)
+    if right - left < 620:
+        left = 0
+        right = width
+
+work = image.crop((left, 0, right, height))
+gray = ImageOps.grayscale(work)
+stat = gray.resize((1, 1)).getpixel((0, 0))
+if stat < 128:
+    gray = ImageOps.invert(gray)
+
+gray = ImageEnhance.Contrast(gray).enhance(2.2)
+gray = ImageEnhance.Sharpness(gray).enhance(1.8)
+if scale > 1:
+    gray = gray.resize((gray.width * scale, gray.height * scale), Image.Resampling.LANCZOS)
+
+slice_px = slice_height * scale
+paths = []
+count = min(max_slices, max(1, math.ceil(gray.height / slice_px)))
+for index in range(count):
+    top = index * slice_px
+    bottom = min(gray.height, top + slice_px)
+    if bottom - top < 80:
+        break
+    part = gray.crop((0, top, gray.width, bottom))
+    path = os.path.join(out_dir, f"slice-{index + 1:03d}.png")
+    part.save(path, optimize=True)
+    paths.append(path)
+
+print("\\n".join(paths))
+`.trim();
+
+const tryExtractImageTextWithTesseract = async (imagePath: string, timeoutMs: number): Promise<string> => {
   if (!appConfig.upload.imageOcrCommand) {
     return "";
   }
@@ -488,11 +736,11 @@ const tryExtractImageTextWithOcr = async (imagePath: string): Promise<string> =>
   try {
     const { stdout } = await execFileAsync(
       appConfig.upload.imageOcrCommand,
-      [imagePath, "stdout", "-l", appConfig.upload.imageOcrLang],
+      [imagePath, "stdout", "-l", appConfig.upload.imageOcrLang, "--psm", appConfig.upload.imageOcrPsm],
       {
         encoding: "utf8",
-        maxBuffer: appConfig.upload.maxExtractedTextChars * 8,
-        timeout: appConfig.upload.imageOcrTimeoutMs,
+        maxBuffer: appConfig.upload.maxRawExtractedTextChars * 8,
+        timeout: timeoutMs,
         windowsHide: true
       }
     );
@@ -500,6 +748,83 @@ const tryExtractImageTextWithOcr = async (imagePath: string): Promise<string> =>
   } catch {
     return "";
   }
+};
+
+const preprocessImageForOcr = async (imagePath: string, tempDir: string): Promise<string[]> => {
+  const commands = appConfig.upload.imageOcrPythonCommands;
+
+  for (const command of commands) {
+    try {
+      const { stdout } = await execFileAsync(
+        command,
+        [
+          "-c",
+          imageOcrPreprocessScript,
+          imagePath,
+          tempDir,
+          String(appConfig.upload.imageOcrScale),
+          String(appConfig.upload.imageOcrSliceHeight),
+          String(appConfig.upload.imageOcrMaxSlices)
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PYTHONIOENCODING: "utf-8"
+          },
+          maxBuffer: 1024 * 1024,
+          timeout: appConfig.upload.imageOcrTimeoutMs,
+          windowsHide: true
+        }
+      );
+      return stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {
+      // Try the next configured Python command.
+    }
+  }
+
+  return [];
+};
+
+const shouldPreferSlicedOcr = (dimensions: { width?: number; height?: number }): boolean =>
+  Boolean(
+    dimensions.width &&
+      dimensions.height &&
+      (dimensions.height > 2600 || dimensions.height / Math.max(dimensions.width, 1) > 3.5)
+  );
+
+const tryExtractImageTextWithOcr = async (
+  imagePath: string,
+  tempDir: string,
+  dimensions: { width?: number; height?: number }
+): Promise<string> => {
+  const preferSlicedOcr = shouldPreferSlicedOcr(dimensions);
+  const directText = preferSlicedOcr
+    ? ""
+    : await tryExtractImageTextWithTesseract(imagePath, appConfig.upload.imageOcrTimeoutMs);
+  if (!preferSlicedOcr && isReadableExtractedText(directText)) {
+    return directText;
+  }
+
+  const slicePaths = await preprocessImageForOcr(imagePath, tempDir);
+  if (slicePaths.length === 0) {
+    return directText || tryExtractImageTextWithTesseract(imagePath, appConfig.upload.imageOcrTimeoutMs);
+  }
+
+  const pieces: string[] = [];
+  for (const slicePath of slicePaths) {
+    const text = await tryExtractImageTextWithTesseract(slicePath, appConfig.upload.imageOcrSliceTimeoutMs);
+    if (isReadableExtractedText(text)) {
+      pieces.push(text);
+    }
+  }
+
+  const slicedText = dedupeLines(pieces.join("\n\n"));
+  const fallbackText = directText || (slicedText ? "" : await tryExtractImageTextWithTesseract(imagePath, appConfig.upload.imageOcrTimeoutMs));
+  return textQualityScore(slicedText) >= textQualityScore(fallbackText) ? slicedText : fallbackText;
 };
 
 const extractImageText = async (buffer: Buffer, filename: string): Promise<{ text: string; description: string }> => {
@@ -519,7 +844,7 @@ const extractImageText = async (buffer: Buffer, filename: string): Promise<{ tex
 
   try {
     await fs.writeFile(imagePath, buffer);
-    const ocrText = await tryExtractImageTextWithOcr(imagePath);
+    const ocrText = await tryExtractImageTextWithOcr(imagePath, tempDir, dimensions);
     const limitedText = ocrText ? limitExtractedText(ocrText, filename) : "";
     return {
       text: [
@@ -599,7 +924,7 @@ const materializeUploadedAttachment = async (
       previewUrl: undefined,
       textContent: attachmentTextBlock(
         attachment,
-        limitExtractedText(decodeTextBuffer(buffer), attachment.filename)
+        limitExtractedText(limitRawExtractedText(decodeTextBuffer(buffer)), attachment.filename)
       ),
       description: "文件已在服务器端解析为文本上下文。"
     };

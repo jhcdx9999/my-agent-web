@@ -117,8 +117,22 @@ const compactMessagesForContext = (messages: ChatMessage[]) => {
       continue;
     }
 
+    const attachmentTextCount =
+      message.attachments?.filter((attachment) => attachmentTextForModel(attachment)).length ?? 0;
+    const hasAttachmentText = attachmentTextCount > 0;
+    const messageCharBudget = hasAttachmentText
+      ? Math.min(
+          appConfig.safety.maxContextChars,
+          Math.max(
+            appConfig.safety.maxMessageChars,
+            appConfig.upload.maxAttachmentContextChars * attachmentTextCount
+          )
+        )
+      : appConfig.safety.maxMessageChars;
     const fullContent = contentWithAttachmentText(message);
-    const content = fullContent.slice(0, appConfig.safety.maxMessageChars);
+    const content = fullContent.length > messageCharBudget
+      ? `${fullContent.slice(0, messageCharBudget)}\n\n[该消息内容较长，已按当前上下文预算截断。]`
+      : fullContent;
     const attachments = message.attachments?.filter(
       (attachment) => attachment.source === "uploaded" && attachment.dataUrl
     );
