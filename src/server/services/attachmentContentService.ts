@@ -914,7 +914,7 @@ const materializeUploadedAttachment = async (
   const buffer = dataUrlToBuffer(attachment.dataUrl);
 
   if (attachment.mimeType.startsWith("image/")) {
-    if (options.preserveImageData || appConfig.upload.imageMode === "vision") {
+    if (options.preserveImageData) {
       return attachment;
     }
 

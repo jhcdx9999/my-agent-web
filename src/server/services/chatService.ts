@@ -289,6 +289,13 @@ const createTextCompletionWithSearchFallback = async (
       throw new HttpError(400, "请先在页面中配置你的 API Key，Codex 文本模式会使用你的 key。");
     }
 
+    options.onProgress?.(
+      progressEvent(
+        "正在通过 Codex app-server 分析",
+        "上传的图片/PDF/文件已转换为文本上下文，本次回答将交给 Codex app-server 处理。",
+        "thinking"
+      )
+    );
     const codexMessages = shouldUseCodexNetwork() ? messages : await messagesWithWebSearchContext(messages, options.onProgress);
 
     return createCodexCompletion(toCodexMessages(codexMessages), model, {
@@ -417,10 +424,6 @@ export const processChat = async (
 
   if (requiresOpenAiApiKey && !apiKey) {
     throw new HttpError(400, "请先在页面中配置你的 API Key。");
-  }
-
-  if (hasUploadedAttachments && intent !== "image" && appConfig.openai.textApi === "chat") {
-    throw new HttpError(400, "上传图片、PDF 或文件需要 OPENAI_TEXT_API=responses。");
   }
 
   if (intent === "image") {

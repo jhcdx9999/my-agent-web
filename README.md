@@ -36,7 +36,7 @@ npm run dev
 
 ```ini
 OPENAI_BASE_URL=https://www.ai-dingyue.com
-AI_TEXT_RUNTIME=openai
+AI_TEXT_RUNTIME=codex
 OPENAI_TEXT_API=responses
 OPENAI_DEFAULT_MODEL=gpt-5.5
 OPENAI_MODELS=gpt-5.5,gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna
@@ -111,7 +111,7 @@ TAVILY_API_KEY=
 OpenAI API key 不再配置在 `.env` 中，而是按登录模式保存：`AUTH_MODE=dominant` 时读写根目录 `a.json`，`AUTH_MODE=free` 时读写 `storage/auth/users.json`。如果当前用户记录里没有 `openaiApiKey`，登录后页面会要求输入；用户可重复输入并覆盖旧 key。
 每个用户都会有独立 `uid`，格式是 `u` 加 6 位随机数字，例如 `u123456`。后端会确保它不和 `a.json`、`storage/auth/users.json` 中已有 uid 重复，并优先按 uid 检索该用户的账号、密码信息和 `openaiApiKey`。
 
-`AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`，适合官方 OpenAI 或 OpenAI-compatible 第三方代理。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，网页模型下拉会显示 `CODEX_MODELS`。Codex 模式下的 provider 由 `CODEX_PROVIDER_BASE_URL`、`CODEX_WIRE_API`、`CODEX_SUPPORTS_WEBSOCKETS` 等变量生成到每个用户自己的 `storage/users/<user>/codex-home/config.toml`；如果设置了 `CODEX_CONFIG_TEMPLATE`，则直接复制该模板文件。
+`AI_TEXT_RUNTIME=openai` 时，文本对话走 `OPENAI_BASE_URL`，适合官方 OpenAI 或 OpenAI-compatible 第三方代理。`AI_TEXT_RUNTIME=codex` 时，普通文本对话、长 `png/jpg/pdf` 文字分析、生成文件和复杂数据代码生成会走本机 `codex app-server --listen stdio://`，网页模型下拉会显示 `CODEX_MODELS`。上传图片/PDF 用于分析时会先在后端 OCR/抽取为文本上下文，再交给 Codex app-server；只有明确的图片生成或改图任务才会走 `OPENAI_IMAGE_MODEL` 对应的图片接口。Codex 模式下的 provider 由 `CODEX_PROVIDER_BASE_URL`、`CODEX_WIRE_API`、`CODEX_SUPPORTS_WEBSOCKETS` 等变量生成到每个用户自己的 `storage/users/<user>/codex-home/config.toml`；如果设置了 `CODEX_CONFIG_TEMPLATE`，则直接复制该模板文件。
 
 默认 `CODEX_AUTH_MODE=user-api-key`：每个网页登录用户都必须在页面配置自己的 API key；后端会为不同用户启动独立 Codex app-server 子进程，并把该用户的 key 注入为 `OPENAI_API_KEY`，同时在用户专属 `config.toml` 中写入 `env_key = "OPENAI_API_KEY"` 和 `requires_openai_auth = false`，避免 Codex 去查找服务器登录态。这个 key 需要和 `CODEX_PROVIDER_BASE_URL` 指向的服务匹配：官方 OpenAI base URL 用官方 key，第三方 Codex-compatible 中转站 base URL 用该中转站的 key。生成图片、上传图片/PDF/文件也会继续使用该用户自己的 OpenAI API key。
 
